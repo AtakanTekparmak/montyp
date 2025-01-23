@@ -1,17 +1,36 @@
 from itertools import chain
-from typing import Any, Dict, List, Optional, Callable, Union
+from typing import Any, Dict, List, Optional, Callable, Union, Generator, TypeVar, Iterable
 
 from .schemas import Var, State, Goal
 from .operations import Function
 
+T = TypeVar('T')
+
 def walk(var: Any, subs: Dict[Var, Any]) -> Any:
-    """Walk through the substitution chain to find the final value."""
+    """Walk through the substitution chain to find the final value.
+    
+    Args:
+        var: The variable or value to resolve
+        subs: Dictionary of variable substitutions
+    
+    Returns:
+        The final value after following all substitutions
+    """
     while isinstance(var, Var) and var in subs:
         var = subs[var]
     return var
 
 def deep_walk(val: Any, subs: Dict[Var, Any], depth: int = 0) -> Any:
-    """Recursively walk through nested structures."""
+    """Recursively walk through nested structures.
+    
+    Args:
+        val: The value to resolve, which may contain nested variables
+        subs: Dictionary of variable substitutions
+        depth: Current recursion depth (used to prevent infinite recursion)
+    
+    Returns:
+        The resolved value with all variables substituted
+    """
     if depth > 100:  # Prevent infinite recursion
         return val
     
@@ -23,7 +42,16 @@ def deep_walk(val: Any, subs: Dict[Var, Any], depth: int = 0) -> Any:
     return val
 
 def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
-    """Unify two terms, returning updated substitutions if successful."""
+    """Unify two terms, returning updated substitutions if successful.
+    
+    Args:
+        u: First term to unify
+        v: Second term to unify
+        subs: Current substitution dictionary
+    
+    Returns:
+        Updated substitutions if unification succeeds, None if it fails
+    """
     u = walk(u, subs)
     v = walk(v, subs)
     
@@ -44,8 +72,16 @@ def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
     return None
 
 def eq(a: Any, b: Any) -> Goal:
-    """Create a goal that unifies two terms."""
-    def goal(state: State):
+    """Create a goal that unifies two terms.
+    
+    Args:
+        a: First term to unify
+        b: Second term to unify
+    
+    Returns:
+        A goal function that attempts to unify the terms
+    """
+    def goal(state: State) -> Generator[State, None, None]:
         if new_subs := unify(a, b, state.subs):
             new_state = state.copy()
             new_state.subs = new_subs
@@ -53,13 +89,26 @@ def eq(a: Any, b: Any) -> Goal:
                 yield new_state
     return goal
 
-def applyo(fn: Union[Function, Callable], *args: Any, result: Any) -> Goal:
-    """Apply a function to arguments and unify with result."""
+def applyo(fn: Union[Function, Callable[..., Any]], *args: Any, result: Any) -> Goal:
+    """Apply a function to arguments and unify with result.
+    
+    This function handles both:
+        - Forward computation: compute result from arguments
+        - Backward computation: find arguments that would give the result
+    
+    Args:
+        fn: Function to apply (either a Function instance or regular callable)
+        *args: Arguments to pass to the function
+        result: Expected result to unify with
+    
+    Returns:
+        A goal function that attempts to satisfy the function application
+    """
     # If fn is not a Function instance, treat it as a regular forward-only function
     if not isinstance(fn, Function):
         fn = Function(fn)
     
-    def goal(state: State):
+    def goal(state: State) -> Generator[State, None, None]:
         resolved_args = [walk(arg, state.subs) for arg in args]
         resolved_result = walk(result, state.subs)
         
@@ -114,7 +163,19 @@ def applyo(fn: Union[Function, Callable], *args: Any, result: Any) -> Goal:
     return goal
 
 def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[Var, Any]]:
-    """Run a list of goals and return solutions."""
+    """Run a list of goals and return solutions.
+    
+    This function attempts to satisfy all goals in sequence, trying both
+    forward and backward computation if needed.
+    
+    Args:
+        goals: List of goals to satisfy
+        n: Maximum number of solutions to return (None for all solutions)
+    
+    Returns:
+        List of solutions, where each solution is a dictionary mapping
+        variables to their values
+    """
     states = [State({}, [])]
     
     # First pass: forward computation

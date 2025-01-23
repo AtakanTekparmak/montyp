@@ -1,22 +1,52 @@
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, List, Optional, Tuple, Union, TypeVar, Protocol
 from inspect import signature
 from operator import add, mul
 from math import sqrt
 
+T = TypeVar('T')
+U = TypeVar('U')
+
+class InverseFn(Protocol):
+    """Protocol for inverse functions that can fail by returning None."""
+    def __call__(self, result: Any, *args: Any) -> Optional[Any]: ...
+
 def string_reverse(s: str) -> str:
+    """Reverse a string.
+    
+    Args:
+        s: The input string to reverse
+    
+    Returns:
+        The reversed string
+    """
     return s[::-1]
 
 class Function:
-    """Wrapper for functions with additional properties for logical programming."""
-    def __init__(self, fn: Callable, 
-                 inverse: Optional[Union[Callable, List[Tuple[int, Callable]]]] = None,
-                 domain: Optional[Callable[[List[Any]], bool]] = None):
+    """Wrapper for functions with additional properties for logical programming.
+    
+    This class extends regular Python functions with:
+        - Inverse functions for backward computation
+        - Domain constraints for input validation
+    """
+    
+    def __init__(self, 
+                 fn: Callable[..., Any],
+                 inverse: Optional[Union[Callable[..., Any], List[Tuple[int, InverseFn]]]] = None,
+                 domain: Optional[Callable[[List[Any]], bool]] = None) -> None:
+        """Initialize a logical function.
+        
+        Args:
+            fn: The forward function to wrap
+            inverse: Either a single inverse function or a list of (argument_index, inverse_function) pairs
+            domain: Optional function that takes arguments and returns whether they're valid
+        """
         self.fn = fn
         self.inverse = inverse  # Either a single inverse function or list of (arg_index, inverse_fn)
         self.domain = domain or (lambda args: True)  # Domain constraint
         self.sig = signature(fn)
     
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Call the wrapped function with the given arguments."""
         return self.fn(*args, **kwargs)
 
 # Common arithmetic operations
@@ -35,5 +65,5 @@ REVERSE = Function(string_reverse,
 
 # Mathematical operations
 SQUARE = Function(lambda x: x * x,
-                 inverse=[(0, lambda res: sqrt(res) if res >= 0 else None)],
+                 inverse=[(0, lambda res: sqrt(res) if res >= 0 else None)],  # x² = res -> x = ±√res
                  domain=lambda args: True) 
