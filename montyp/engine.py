@@ -1,37 +1,17 @@
 from itertools import chain
-from typing import Any, Dict, List, Optional, Callable, Generator, Iterable, Union, Tuple
-from operator import add, mul
-from inspect import signature
-import math
+from typing import Any, Dict, List, Optional, Callable, Union
 
-def string_reverse(s):
-    return s[::-1]
-
-class Var:
-    _id = 0
-    def __init__(self):
-        self.id = Var._id
-        Var._id += 1
-    
-    def __repr__(self):
-        return f"_{self.id}"
-
-class State:
-    def __init__(self, subs: Dict[Var, Any], constraints: List[Callable[['State'], bool]]):
-        self.subs = subs
-        self.constraints = constraints
-    
-    def copy(self):
-        return State(self.subs.copy(), self.constraints.copy())
-
-Goal = Callable[[State], Generator[State, None, None]]
+from .schemas import Var, State, Goal
+from .operations import Function
 
 def walk(var: Any, subs: Dict[Var, Any]) -> Any:
+    """Walk through the substitution chain to find the final value."""
     while isinstance(var, Var) and var in subs:
         var = subs[var]
     return var
 
 def deep_walk(val: Any, subs: Dict[Var, Any], depth: int = 0) -> Any:
+    """Recursively walk through nested structures."""
     if depth > 100:  # Prevent infinite recursion
         return val
     
@@ -43,6 +23,7 @@ def deep_walk(val: Any, subs: Dict[Var, Any], depth: int = 0) -> Any:
     return val
 
 def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
+    """Unify two terms, returning updated substitutions if successful."""
     u = walk(u, subs)
     v = walk(v, subs)
     
@@ -63,6 +44,7 @@ def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
     return None
 
 def eq(a: Any, b: Any) -> Goal:
+    """Create a goal that unifies two terms."""
     def goal(state: State):
         if new_subs := unify(a, b, state.subs):
             new_state = state.copy()
@@ -71,33 +53,8 @@ def eq(a: Any, b: Any) -> Goal:
                 yield new_state
     return goal
 
-class Function:
-    """Wrapper for functions with additional properties for logical programming."""
-    def __init__(self, fn: Callable, 
-                 inverse: Optional[Union[Callable, List[Tuple[int, Callable]]]] = None,
-                 domain: Optional[Callable[[List[Any]], bool]] = None):
-        self.fn = fn
-        self.inverse = inverse  # Either a single inverse function or list of (arg_index, inverse_fn)
-        self.domain = domain or (lambda args: True)  # Domain constraint
-        self.sig = signature(fn)
-    
-    def __call__(self, *args, **kwargs):
-        return self.fn(*args, **kwargs)
-
-# Define some common functions with their inverses
-ADD = Function(add, 
-              inverse=[(0, lambda res, y: res - y),   # x + y = res -> x = res - y
-                      (1, lambda res, x: res - x)])   # x + y = res -> y = res - x
-
-MUL = Function(mul,
-              inverse=[(0, lambda res, y: res / y if y != 0 else None),  # x * y = res -> x = res / y
-                      (1, lambda res, x: res / x if x != 0 else None)],  # x * y = res -> y = res / x
-              domain=lambda args: 0 not in args[1:])  # Prevent division by zero
-
-REVERSE = Function(string_reverse,
-                  inverse=[(0, string_reverse)])  # reverse(x) = y -> x = reverse(y)
-
 def applyo(fn: Union[Function, Callable], *args: Any, result: Any) -> Goal:
+    """Apply a function to arguments and unify with result."""
     # If fn is not a Function instance, treat it as a regular forward-only function
     if not isinstance(fn, Function):
         fn = Function(fn)
@@ -157,6 +114,7 @@ def applyo(fn: Union[Function, Callable], *args: Any, result: Any) -> Goal:
     return goal
 
 def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[Var, Any]]:
+    """Run a list of goals and return solutions."""
     states = [State({}, [])]
     
     # First pass: forward computation

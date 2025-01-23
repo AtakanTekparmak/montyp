@@ -1,4 +1,6 @@
-from montyp.engine import run, Var, applyo, ADD, MUL, REVERSE, Function
+from montyp.engine import run, applyo
+from montyp.schemas import Var
+from montyp.operations import ADD, MUL, REVERSE, SQUARE
 
 if __name__ == "__main__":
     # Test 1: x + 5 = 8
@@ -21,11 +23,6 @@ if __name__ == "__main__":
     ]))
     
     # Test 4: Custom function with inverse
-    from math import sqrt
-    SQUARE = Function(lambda x: x * x, 
-                     inverse=[(0, lambda res: sqrt(res) if res >= 0 else None)],
-                     domain=lambda args: True)
-    
     x = Var()
     print("\nTest 4 Solutions:", run([
         applyo(SQUARE, x, result=16)
