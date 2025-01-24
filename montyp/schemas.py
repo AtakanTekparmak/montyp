@@ -1,24 +1,30 @@
 from typing import Any, Dict, List, Callable, Generator, TypeVar
 from dataclasses import dataclass
+import inspect
+import sys
 
 T = TypeVar('T')  # Generic type for State constraints
 
 class Var:
     """A logical variable that can be unified with any value.
     
-    Each variable has a unique ID that is used for representation and comparison.
-    Variables are automatically numbered starting from 0.
+    Each variable has a unique ID that is used for comparison and a name for representation.
     """
     _id: int = 0
     
-    def __init__(self) -> None:
-        """Create a new variable with a unique ID."""
+    def __init__(self, name: str) -> None:
+        """Create a new variable with a unique ID and given name.
+        
+        Args:
+            name: The name of the variable for representation
+        """
         self.id: int = Var._id
         Var._id += 1
+        self.name = name
     
     def __repr__(self) -> str:
-        """Return a string representation of the variable (e.g., '_0', '_1')."""
-        return f"_{self.id}"
+        """Return a string representation of the variable."""
+        return self.name
 
 class State:
     """Represents the current state of the logical computation.
