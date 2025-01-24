@@ -1,7 +1,8 @@
 from itertools import chain
-from typing import Any, Dict, List, Optional, Generator, TypeVar, Set
+from typing import Any, Dict, List, Optional, Generator, TypeVar, Set, Type, get_origin, get_args, Union
+from collections.abc import Sequence
 
-from .schemas import Var, State, Goal
+from .schemas import Var, TypedVar, State, Goal
 
 T = TypeVar('T')
 
@@ -58,26 +59,30 @@ def deep_walk(val: Any, subs: Dict[Var, Any], depth: int = 0) -> Any:
     return val
 
 def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
-    """Unify two terms, returning updated substitutions if successful.
-    
-    Args:
-        u: First term to unify
-        v: Second term to unify
-        subs: Current substitution dictionary
-    
-    Returns:
-        Updated substitutions if unification succeeds, None if it fails
-    """
+    """Unify two terms with improved type handling."""
     u = walk(u, subs)
     v = walk(v, subs)
     
     if u == v:
         return subs
+        
+    # Handle TypedVar constraints with recursive type checking
+    if isinstance(u, TypedVar):
+        if not u.check_type(v):
+            return None
+        return {**subs, u: v}
+    if isinstance(v, TypedVar):
+        if not v.check_type(u):
+            return None
+        return {**subs, v: u}
+    
+    # Regular Var handling
     if isinstance(u, Var):
         return {**subs, u: v}
     if isinstance(v, Var):
         return {**subs, v: u}
     
+    # Handle nested structures
     if isinstance(u, (list, tuple)) and isinstance(v, (list, tuple)) and len(u) == len(v):
         new_subs = subs.copy()
         for ui, vi in zip(u, v):
@@ -153,3 +158,55 @@ def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[str, Any]]:
             solutions.append(sol)
     
     return solutions
+
+def infer_type(value: Any) -> Union[Type, str]:
+    """Infer the type of a value with support for generic types."""
+    if isinstance(value, (list, tuple)):
+        container_type = type(value)
+        if not value:
+            return container_type.__name__
+            
+        # Infer element types
+        element_types = {infer_type(x) for x in value}
+        
+        # Convert type objects to strings if needed
+        element_types = {
+            t.__name__ if isinstance(t, type) else t
+            for t in element_types
+        }
+        
+        # If all elements are of the same type, create a generic type
+        if len(element_types) == 1:
+            elem_type = next(iter(element_types))
+            if container_type is list:
+                return f"List[{elem_type}]"
+            elif container_type is tuple:
+                return f"Tuple[{elem_type}, ...]"
+        
+        # For mixed types, create a union type
+        types_str = ", ".join(sorted(element_types))
+        if container_type is list:
+            return f"List[Union[{types_str}]]"
+        return f"Tuple[Union[{types_str}], ...]"
+        
+    return type(value).__name__
+
+def type_of(var: Var, type_var: Optional[Var] = None) -> Goal:
+    """Create a goal that unifies a variable with its inferred type."""
+    def goal(state: State) -> Generator[State, None, None]:
+        val = walk(var, state.subs)
+        if isinstance(val, Var):
+            yield state  # Can't infer type yet
+        else:
+            inferred = infer_type(val)
+            new_state = state.copy()
+            
+            if type_var is not None:
+                if new_subs := unify(type_var, inferred, new_state.subs):
+                    new_state.subs = new_subs
+                    yield new_state
+            else:
+                new_state.subs[var] = inferred
+                yield new_state
+                
+    return goal
