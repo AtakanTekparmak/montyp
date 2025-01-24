@@ -1,6 +1,6 @@
 from typing import Any, Callable, List, Optional, Tuple, Union, TypeVar, Protocol
 from inspect import signature
-from operator import add, mul
+from operator import add, mul, sub, truediv
 from math import sqrt
 
 T = TypeVar('T')
@@ -67,3 +67,18 @@ REVERSE = Function(string_reverse,
 SQUARE = Function(lambda x: x * x,
                  inverse=[(0, lambda res: sqrt(res) if res >= 0 else None)],  # x² = res -> x = ±√res
                  domain=lambda args: True) 
+
+# Add these new function definitions at the bottom of the file
+SUB = Function(sub,
+              inverse=[
+                  (0, lambda res, y: res + y),   # x - y = res → x = res + y
+                  (1, lambda res, x: x - res)    # x - y = res → y = x - res
+              ],
+              domain=lambda args: True)
+
+DIV = Function(truediv,
+              inverse=[
+                  (0, lambda res, y: res * y if y != 0 else None),  # x / y = res → x = res * y
+                  (1, lambda res, x: x / res if res != 0 else None)  # x / y = res → y = x / res
+              ],
+              domain=lambda args: args[1] != 0)  # Prevent division by zero 

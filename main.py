@@ -1,7 +1,7 @@
 from montyp.engine import run, applyo, eq
 from montyp.schemas import Var
-from montyp.operations import ADD, MUL, REVERSE, SQUARE
-from operator import sub, truediv
+from montyp.operations import ADD, MUL, REVERSE, SQUARE, SUB, Function
+from operator import truediv
 from math import sqrt, pow
 
 if __name__ == "__main__":
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     print("\nTest 3 Solutions:", run([
         applyo(REVERSE, s, result="dlrow olleH")
     ]))
-    
+
     # Test 4: Find a number that when squared equals 16
     # Expected: x = 4 (or -4, but our inverse function only returns the positive root)
     x = Var()
@@ -61,3 +61,27 @@ if __name__ == "__main__":
         applyo(ADD, x, 5, result=y),  # y = x + 5 = 15
         eq([x, y], result)            # result = [10, 15]
     ]))
+
+    # Test 8: Custom function with inverse (subtraction)
+    a, b = Var(), Var()
+    print("\nTest 8 Solutions:", run([
+        applyo(SUB, a, 5, result=3),    # Using SUB instead of sub
+        applyo(SUB, 10, b, result=4)
+    ]))
+
+    # Test 9: Custom function with manual inverse
+    def double(x):
+        return x * 2
+    
+    # Create a logical function with inverse
+    DOUBLE = Function(
+        double,
+        inverse=[(0, lambda res: res / 2)],  # Add inverse
+        domain=lambda args: True
+    )
+    
+    x = Var()
+    print("\nTest 9 Solutions:", run([
+        applyo(DOUBLE, x, result=8)  # Now works bidirectionally
+    ]))
+
