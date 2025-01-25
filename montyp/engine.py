@@ -244,6 +244,18 @@ def getitem(container: Any, key: Any, result: Var) -> Goal:
 
 def infer_type(value: Any) -> Union[Type, str]:
     """Infer the type of a value with support for generic types."""
+    # Handle TypedVar values by using their type constraint
+    if isinstance(value, TypedVar):
+        type_str = str(value.type[0])
+        if get_origin(value.type[0]) is not None:
+            type_str = str(value.type[0].__origin__.__name__)
+            args = get_args(value.type[0])
+            if args:
+                type_str += f"[{', '.join(arg.__name__ for arg in args)}]"
+        else:
+            type_str = value.type[0].__name__
+        return type_str
+
     if isinstance(value, dict):
         if not value:
             return "Dict"
@@ -275,7 +287,15 @@ def infer_type(value: Any) -> Union[Type, str]:
         if not value:
             return container_type.__name__
             
-        element_types = {infer_type(x) for x in value}
+        # Recursively infer types for elements, handling TypedVars
+        element_types = set()
+        for x in value:
+            if isinstance(x, TypedVar):
+                element_types.add(infer_type(x))
+            else:
+                element_types.add(infer_type(x))
+        
+        # Convert type objects to strings if needed
         element_types = {t.__name__ if isinstance(t, type) else t for t in element_types}
         
         if len(element_types) == 1:

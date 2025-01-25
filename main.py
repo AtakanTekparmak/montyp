@@ -7,13 +7,15 @@ def main():
     x = TypedVar('x', int)
     y = Var('y')
     z = Var('z')
+    z_type = Var('z_type')
+    y_type = Var('y_type')
     
     result = run([
         eq(x, 42),
         eq(y, "Hello"),
-        type_of(y, Var('y_type')),
+        type_of(y, y_type),
         eq(z, [x, 43]),
-        type_of(z, Var('z_type'))
+        type_of(z, z_type)
     ])
     
     print("Demo result:", result)

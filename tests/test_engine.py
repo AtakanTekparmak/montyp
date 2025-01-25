@@ -171,5 +171,21 @@ class TestMontyEngine(unittest.TestCase):
         self.assertEqual(result[0]['element'], 3)
         self.assertEqual(result[0]['value'], [2, 3, 4])
 
+    def test_typed_var_in_list(self):
+        """Test type inference with TypedVars inside lists"""
+        x = TypedVar('x', int)
+        z = Var('z')
+        z_type = Var('z_type')
+        
+        result = run([
+            eq(x, 42),
+            eq(z, [x, 43]),
+            type_of(z, z_type)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['z'], [42, 43])
+        self.assertEqual(result[0]['z_type'], 'List[int]')
+
 if __name__ == '__main__':
     unittest.main() 
