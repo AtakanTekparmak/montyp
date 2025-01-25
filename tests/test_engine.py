@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from montyp.engine import run, eq, type_of, getitem
-from montyp.schemas import Var, TypedVar
+from montyp.schemas import Var, TypedVar, FunctionType
 from typing import List, Union, Dict
 
 class TestMontyEngine(unittest.TestCase):
@@ -186,6 +186,66 @@ class TestMontyEngine(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['z'], [42, 43])
         self.assertEqual(result[0]['z_type'], 'List[int]')
+
+    def test_function_types(self):
+        """Test function type inference and constraints"""
+        def add(x: int, y: int) -> int:
+            return x + y
+        
+        f = Var('f')
+        f_type = Var('f_type')
+        
+        result = run([
+            eq(f, add),
+            type_of(f, f_type)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['f'], add)
+        self.assertEqual(result[0]['f_type'], '(int, int) -> int')
+
+    def test_function_type_constraints(self):
+        """Test function type constraints"""
+        def add(x: int, y: int) -> int:
+            return x + y
+        
+        f = TypedVar('f', FunctionType([int, int], int))
+        
+        result = run([
+            eq(f, add)  # This should work
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['f'], add)
+        
+        # Try with incompatible function
+        def concat(x: str, y: str) -> str:
+            return x + y
+        
+        result = run([
+            eq(f, concat)  # This should fail
+        ])
+        
+        self.assertEqual(len(result), 0)
+
+    def test_nested_function_types(self):
+        """Test nested function types in data structures"""
+        def inc(x: int) -> int:
+            return x + 1
+        
+        def double(x: int) -> int:
+            return x * 2
+        
+        funcs = Var('funcs')
+        funcs_type = Var('funcs_type')
+        
+        result = run([
+            eq(funcs, [inc, double]),  # Use named function instead of lambda
+            type_of(funcs, funcs_type)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['funcs_type'], 'List[(int) -> int]')
 
 if __name__ == '__main__':
     unittest.main() 

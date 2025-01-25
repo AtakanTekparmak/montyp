@@ -1,7 +1,5 @@
-from typing import Any, Dict, List, Callable, Generator, TypeVar, Type, Optional, Union, get_origin, get_args
-from dataclasses import dataclass
-import inspect
-import sys
+from typing import Any, Dict, List, Callable, Generator, TypeVar, Type, Optional, Union, get_origin, get_args, get_type_hints
+from inspect import signature
 
 T = TypeVar('T')  # Generic type for State constraints
 
@@ -26,15 +24,37 @@ class Var:
         """Return a string representation of the variable."""
         return self.name
 
+class FunctionType:
+    """Represents a function type with input and output types."""
+    
+    def __init__(self, inputs: List[Type], output: Type):
+        """Create a function type.
+        
+        Args:
+            inputs: List of input types
+            output: Output type
+        """
+        self.inputs = inputs
+        self.output = output
+    
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, FunctionType):
+            return False
+        return self.inputs == other.inputs and self.output == other.output
+    
+    def __repr__(self) -> str:
+        inputs_str = ", ".join(t.__name__ for t in self.inputs)
+        return f"({inputs_str}) -> {self.output.__name__}"
+
 class TypedVar(Var):
     """A logical variable with type constraints."""
     
-    def __init__(self, name: str, type_: Union[Type, tuple[Type, ...]], nullable: bool = False) -> None:
+    def __init__(self, name: str, type_: Union[Type, tuple[Type, ...], FunctionType], nullable: bool = False) -> None:
         """Create a new typed variable.
         
         Args:
             name: The name of the variable
-            type_: The expected type(s) for this variable
+            type_: The expected type(s) or function type for this variable
             nullable: Whether None is an acceptable value
         """
         super().__init__(name)
@@ -45,6 +65,40 @@ class TypedVar(Var):
         """Check if a value matches the variable's type constraints."""
         if value is None:
             return self.nullable
+            
+        # Handle function types
+        if any(isinstance(t, FunctionType) for t in self.type):
+            if not callable(value):
+                return False
+                
+            # Get the function type constraint
+            func_type = next(t for t in self.type if isinstance(t, FunctionType))
+            
+            # Check function signature
+            hints = get_type_hints(value)
+            if not hints:
+                return False  # Require type hints
+                
+            # Check parameters
+            sig = signature(value)
+            if len(sig.parameters) != len(func_type.inputs):
+                return False
+                
+            # Check input types
+            for param, expected_type in zip(sig.parameters.values(), func_type.inputs):
+                if param.name not in hints:
+                    return False
+                actual_type = hints[param.name]
+                if not issubclass(actual_type, expected_type):
+                    return False
+                    
+            # Check return type
+            if 'return' not in hints:
+                return False
+            if not issubclass(hints['return'], func_type.output):
+                return False
+                
+            return True
             
         # If value is a TypedVar, check type compatibility
         if isinstance(value, TypedVar):

@@ -1,8 +1,9 @@
 from itertools import chain
-from typing import Any, Dict, List, Optional, Generator, TypeVar, Set, Type, get_origin, get_args, Union
+from typing import Any, Dict, List, Optional, Generator, TypeVar, Set, Type, get_origin, get_args, Union, get_type_hints
 from collections.abc import Sequence
+from inspect import signature
 
-from .schemas import Var, TypedVar, State, Goal
+from .schemas import Var, TypedVar, State, Goal, FunctionType
 
 T = TypeVar('T')
 
@@ -242,8 +243,23 @@ def getitem(container: Any, key: Any, result: Var) -> Goal:
                 pass
     return goal
 
-def infer_type(value: Any) -> Union[Type, str]:
-    """Infer the type of a value with support for generic types."""
+def infer_type(value: Any) -> Union[Type, str, FunctionType]:
+    """Infer the type of a value with support for generic types and functions."""
+    # Handle functions
+    if callable(value):
+        # Try to get type hints if available
+        hints = get_type_hints(value)
+        if hints:
+            inputs = []
+            for param in signature(value).parameters.values():
+                if param.name in hints:
+                    inputs.append(hints[param.name])
+                else:
+                    inputs.append(Any)
+            output = hints.get('return', Any)
+            return str(FunctionType(inputs, output))  # Convert to string immediately
+        return "Callable"
+        
     # Handle TypedVar values by using their type constraint
     if isinstance(value, TypedVar):
         type_str = str(value.type[0])
@@ -287,13 +303,15 @@ def infer_type(value: Any) -> Union[Type, str]:
         if not value:
             return container_type.__name__
             
-        # Recursively infer types for elements, handling TypedVars
+        # Recursively infer types for elements
         element_types = set()
         for x in value:
-            if isinstance(x, TypedVar):
-                element_types.add(infer_type(x))
+            inferred = infer_type(x)
+            # Convert FunctionType to string if needed
+            if isinstance(inferred, FunctionType):
+                element_types.add(str(inferred))
             else:
-                element_types.add(infer_type(x))
+                element_types.add(inferred)
         
         # Convert type objects to strings if needed
         element_types = {t.__name__ if isinstance(t, type) else t for t in element_types}
@@ -329,4 +347,29 @@ def type_of(var: Var, type_var: Optional[Var] = None) -> Goal:
                 new_state.subs[var] = inferred
                 yield new_state
                 
+    return goal
+
+def function_type(func: Var, inputs: List[Type], output: Type) -> Goal:
+    """Create a goal that constrains a variable to be a function with given types."""
+    def goal(state: State) -> Generator[State, None, None]:
+        func_val = walk(func, state.subs)
+        if isinstance(func_val, Var):
+            # Create a TypedVar with function type
+            typed_var = TypedVar(func_val.name, FunctionType(inputs, output))
+            if new_subs := unify(func_val, typed_var, state.subs):
+                new_state = state.copy()
+                new_state.subs = new_subs
+                yield new_state
+        elif callable(func_val):
+            # Check if function matches type constraints
+            hints = get_type_hints(func_val)
+            if hints:
+                actual_inputs = []
+                for param in signature(func_val).parameters.values():
+                    if param.name in hints:
+                        actual_inputs.append(hints[param.name])
+                actual_output = hints.get('return', Any)
+                if all(issubclass(a, e) for a, e in zip(actual_inputs, inputs)) and \
+                   issubclass(actual_output, output):
+                    yield state
     return goal
