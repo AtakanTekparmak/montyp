@@ -16,7 +16,9 @@ def walk(var: Any, subs: Dict[Var, Any]) -> Any:
     Returns:
         The final value after following all substitutions
     """
-    while isinstance(var, Var) and var in subs:
+    seen = set()  # Prevent infinite recursion
+    while isinstance(var, Var) and var in subs and var not in seen:
+        seen.add(var)
         var = subs[var]
     return var
 
@@ -34,6 +36,10 @@ def collect_vars(val: Any) -> Set[Var]:
         vars_set.add(val)
     elif isinstance(val, (list, tuple)):
         for v in val:
+            vars_set.update(collect_vars(v))
+    elif isinstance(val, dict):
+        for k, v in val.items():
+            vars_set.update(collect_vars(k))
             vars_set.update(collect_vars(v))
     return vars_set
 
@@ -65,28 +71,42 @@ def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
     
     if u == v:
         return subs
-        
-    # Handle TypedVar constraints with recursive type checking
+    
+    # Handle TypedVar constraints
     if isinstance(u, TypedVar):
         if isinstance(v, Var):
-            # When unifying TypedVar with Var, propagate the type constraint
-            return {**subs, v: u}
+            # Create a new TypedVar with the same type constraints
+            typed_var = TypedVar(v.name, u.type, u.nullable)
+            return {**subs, v: typed_var}
+        if isinstance(v, TypedVar):
+            if not u.check_type(v):
+                return None
+            return subs
+        if isinstance(v, (list, tuple)):
+            # For lists/tuples, handle element type constraints
+            origin_type = get_origin(u.type[0])
+            if origin_type in (list, tuple):
+                elem_type = get_args(u.type[0])[0]
+                new_subs = subs.copy()
+                # Apply type constraints to all variables in the list
+                for elem in v:
+                    elem_val = walk(elem, new_subs)
+                    if isinstance(elem_val, Var):
+                        # Create a new TypedVar for the element
+                        elem_typed_var = TypedVar(elem_val.name, elem_type)
+                        if (new_subs := unify(elem_typed_var, elem_val, new_subs)) is None:
+                            return None
+                return {**new_subs, u: v}
+            # Check type after propagating constraints to variables
+            if not u.check_type(v):
+                return None
+            return {**subs, u: v}
         if not u.check_type(v):
             return None
         return {**subs, u: v}
-    if isinstance(v, TypedVar):
-        if isinstance(u, Var):
-            # When unifying Var with TypedVar, propagate the type constraint
-            return {**subs, u: v}
-        if not v.check_type(u):
-            return None
-        return {**subs, v: u}
     
-    # Regular Var handling
-    if isinstance(u, Var):
-        return {**subs, u: v}
-    if isinstance(v, Var):
-        return {**subs, v: u}
+    if isinstance(v, TypedVar):
+        return unify(v, u, subs)
     
     # Handle nested structures
     if isinstance(u, (list, tuple)) and isinstance(v, (list, tuple)) and len(u) == len(v):
@@ -95,6 +115,20 @@ def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
             if (new_subs := unify(ui, vi, new_subs)) is None:
                 return None
         return new_subs
+    
+    # Regular Var handling
+    if isinstance(u, Var):
+        # Check if we're unifying with a value that should satisfy a type constraint
+        u_val = walk(u, subs)
+        if isinstance(u_val, TypedVar) and not u_val.check_type(v):
+            return None
+        return {**subs, u: v}
+    if isinstance(v, Var):
+        # Check if we're unifying with a value that should satisfy a type constraint
+        v_val = walk(v, subs)
+        if isinstance(v_val, TypedVar) and not v_val.check_type(u):
+            return None
+        return {**subs, v: u}
     
     return None
 
@@ -127,13 +161,11 @@ def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[str, Any]]:
         List of solutions, where each solution is a dictionary mapping
         variable names to their values
     """
-    # Reset Var._id counter to ensure consistent behavior
     Var._id = 0
     
-    # First, collect all variables from the goals
+    # Collect all variables from the goals
     original_vars = set()
     for goal in goals:
-        # Extract the closure's variables from the goal function
         if hasattr(goal, '__closure__') and goal.__closure__:
             for cell in goal.__closure__:
                 if isinstance(cell.cell_contents, tuple):
@@ -157,8 +189,26 @@ def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[str, Any]]:
         # Resolve each original variable
         for var in original_vars:
             val = deep_walk(var, state.subs)
-            if not isinstance(val, Var):  # Only add if we have a concrete value
+            if isinstance(val, TypedVar):
+                # If it's a TypedVar with a concrete value, use that
+                concrete_val = walk(val, state.subs)
+                if not isinstance(concrete_val, (TypedVar, Var)):
+                    sol[var.name] = concrete_val
+            elif not isinstance(val, Var):
                 sol[var.name] = val
+            
+            # Also include type information for variables that got type constraints
+            type_val = walk(var, state.subs)
+            if isinstance(type_val, TypedVar):
+                type_str = str(type_val.type[0])
+                if get_origin(type_val.type[0]) is not None:
+                    type_str = str(type_val.type[0].__origin__.__name__)
+                    args = get_args(type_val.type[0])
+                    if args:
+                        type_str += f"[{', '.join(arg.__name__ for arg in args)}]"
+                else:
+                    type_str = type_val.type[0].__name__
+                sol[f"{var.name}_type"] = type_str
         
         if sol:
             solutions.append(sol)

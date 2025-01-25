@@ -46,6 +46,13 @@ class TypedVar(Var):
         if value is None:
             return self.nullable
             
+        # If value is a TypedVar, check type compatibility
+        if isinstance(value, TypedVar):
+            return all(any(
+                t1 == t2 or (get_origin(t1) == get_origin(t2) and get_args(t1) == get_args(t2))
+                for t2 in value.type
+            ) for t1 in self.type)
+            
         def check_container_type(container_value: Any, container_type: Type, elem_type: Type) -> bool:
             origin_type = get_origin(container_type) or container_type
             if not isinstance(container_value, origin_type):

@@ -26,13 +26,15 @@ if __name__ == "__main__":
     # Test 3: Generic type constraints with variable propagation
     list_of_ints = TypedVar('nums', List[int])
     elem = TypedVar('elem', int)
-    unknown = Var('unknown')  # This should get the int constraint
-    
+    unknown = Var('unknown')
+    type_of_unknown = Var('type_of_unknown')
+
     print("\nTest Generic Constraints:", run([
-        eq(list_of_ints, [1, 2, unknown]),  # Changed order to help unification
-        eq(unknown, 3),
-        eq(elem, unknown)
-    ]))
+        eq(list_of_ints, [1, 2, unknown]),  # This should constrain unknown to be an int
+        eq(unknown, 3),                     # This should work because 3 is an int
+        eq(elem, unknown),                  # This should work because unknown is an int
+        type_of(unknown, type_of_unknown)   # This should show int
+    ])) 
     
     # Test 4: Mixed type inference
     mixed = Var('mixed')
@@ -46,10 +48,12 @@ if __name__ == "__main__":
     # Test 5: Nested type constraints
     nested = TypedVar('nested', List[List[int]])
     result = Var('result')
+    type_of_result = Var('type_of_result')
     
     print("\nTest Nested Types:", run([
         eq(nested, [[1, 2], [3, 4]]),
-        eq(result, nested)  # result should get the nested type constraint
+        eq(result, nested),  # result should get the nested type constraint
+        type_of(result, type_of_result)
     ]))
     
     # Test 6: Complex type inference with dictionaries
