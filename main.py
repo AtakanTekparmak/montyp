@@ -1,5 +1,5 @@
 import json
-from montyp.engine import run, eq, type_of
+from montyp.engine import run, eq, type_of, apply
 from montyp.schemas import Var, TypedVar
 
 def main():
@@ -9,18 +9,20 @@ def main():
     
     # Define variables
     x = TypedVar('x', int)
-    y = Var('y')
+    y = TypedVar('y', int)
     z = Var('z')
+    k = Var('k')
     x_type = Var('x_type')
     add_type = Var('add_type')
 
     # Define constraints
     result = run([
         eq(x, 42),
-        eq(y, "Hello"),
+        eq(y, 10),
         eq(z, (x, y)),
         type_of(x, x_type),
-        type_of(add, add_type)
+        type_of(add, add_type),
+        apply(add, [x, y], k)
     ])
     
     print("Demo result:\n", json.dumps(result, indent=2))

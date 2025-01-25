@@ -1,5 +1,5 @@
 from itertools import chain
-from typing import Any, Dict, List, Optional, Generator, TypeVar, Set, Type, get_origin, get_args, Union, get_type_hints
+from typing import Any, Dict, List, Optional, Generator, TypeVar, Set, Type, get_origin, get_args, Union, get_type_hints, Callable
 from collections.abc import Sequence
 from inspect import signature
 
@@ -372,4 +372,34 @@ def function_type(func: Var, inputs: List[Type], output: Type) -> Goal:
                 if all(issubclass(a, e) for a, e in zip(actual_inputs, inputs)) and \
                    issubclass(actual_output, output):
                     yield state
+    return goal
+
+def apply(func: Callable, args: List[Any], result: Var) -> Goal:
+    """Create a goal that applies a function to arguments and unifies the result.
+    
+    Args:
+        func: The function to apply
+        args: List of arguments to pass to the function
+        result: Variable to unify with the function result
+        
+    Returns:
+        A goal that attempts to apply the function and unify the result
+    """
+    def goal(state: State) -> Generator[State, None, None]:
+        # Walk all arguments to their final values
+        walked_args = [walk(arg, state.subs) for arg in args]
+        
+        # Only execute if all arguments are concrete values (not Var/TypedVar)
+        if all(not isinstance(arg, (Var, TypedVar)) for arg in walked_args):
+            try:
+                # Execute function with concrete values
+                func_result = func(*walked_args)
+                if new_subs := unify(result, func_result, state.subs):
+                    new_state = state.copy()
+                    new_state.subs = new_subs
+                    if all(c(new_state) for c in new_state.constraints):
+                        yield new_state
+            except (TypeError, ValueError):
+                # Function application failed - no solutions
+                pass
     return goal
