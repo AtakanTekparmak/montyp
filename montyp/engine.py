@@ -2,6 +2,8 @@ from itertools import chain
 from typing import Any, Dict, List, Optional, Generator, TypeVar, Set, Type, get_origin, get_args, Union, get_type_hints, Callable
 from collections.abc import Sequence
 from inspect import signature
+from functools import partial
+import inspect
 
 from .schemas import Var, TypedVar, State, Goal, FunctionType
 
@@ -243,8 +245,197 @@ def getitem(container: Any, key: Any, result: Var) -> Goal:
                 pass
     return goal
 
+def get_higher_order_type(func: Callable) -> Optional[str]:
+    """Get the type signature for higher-order functions."""
+    if func == map:
+        return "HigherOrder[map]"
+    # Add other higher-order functions as needed
+    return None
+
+def apply_higher_order(func: Callable, args: List[Any], result: Any) -> Any:
+    """Apply higher-order function and handle type inference."""
+    if func == map:
+        f, iterable = args
+        
+        # Handle case where function is a variable
+        if isinstance(f, (Var, TypedVar)):
+            return None, None  # Let the regular unification handle this case
+            
+        # Get type hints for the mapping function
+        try:
+            f_hints = get_type_hints(f)
+            input_type = f_hints.get('x') or next(iter(f_hints.values()))  # Get first param type
+            return_type = f_hints.get('return')
+        except (TypeError, ValueError):
+            return None, None
+        
+        # Apply map and convert to list
+        try:
+            mapped = list(map(f, iterable))
+            
+            # Infer result type based on function signature
+            if return_type:
+                return mapped, f'List[{return_type.__name__}]'
+            return mapped, f'List[{type(mapped[0]).__name__}]' if mapped else 'List'
+        except (TypeError, ValueError):
+            return None, None
+    
+    return None, None
+
+def apply(func: Callable, args: List[Any], result: Var) -> Goal:
+    """Create a goal that applies a function to arguments and unifies the result."""
+    def goal(state: State) -> Generator[State, None, None]:
+        # Walk all arguments and result to their final values
+        walked_args = [walk(arg, state.subs) for arg in args]
+        walked_result = walk(result, state.subs)
+        
+        # Check if this is a higher-order function
+        if get_higher_order_type(func):
+            # Case 1: All arguments are concrete
+            if all(not isinstance(arg, (Var, TypedVar)) for arg in walked_args):
+                try:
+                    # Apply the higher-order function
+                    applied_result, result_type = apply_higher_order(func, walked_args, walked_result)
+                    if applied_result is not None:
+                        # Create new state with result
+                        new_state = state.copy()
+                        
+                        # Explicitly store the result in the state
+                        new_state.subs[result.name] = applied_result
+                        if new_subs := unify(result, applied_result, new_state.subs):
+                            new_state.subs.update(new_subs)
+                            
+                            # Add type information if available
+                            if result_type and isinstance(result, Var):
+                                type_var = Var(f"{result.name}_type")
+                                if type_subs := unify(type_var, result_type, new_state.subs):
+                                    new_state.subs.update(type_subs)
+                            
+                            if all(c(new_state) for c in new_state.constraints):
+                                yield new_state
+                except (TypeError, ValueError):
+                    pass
+                    
+            # Case 2: Function argument is a variable and we have a concrete result
+            elif isinstance(walked_args[0], (Var, TypedVar)) and not isinstance(walked_result, (Var, TypedVar)):
+                input_list = walked_args[1]
+                expected_output = walked_result
+                
+                # Try each available function that matches the type signature
+                candidates = [v for k, v in state.subs.items() if isinstance(k, Var) and callable(v)]
+                for candidate_func in candidates:
+                    if not callable(candidate_func):
+                        continue
+                        
+                    try:
+                        # Test if this function produces the expected output
+                        test_result = list(map(candidate_func, input_list))
+                        if test_result == expected_output:
+                            # Create a new state for this potential solution
+                            new_state = state.copy()
+                            
+                            # Store both function and result in the state
+                            new_state.subs[walked_args[0].name] = candidate_func
+                            new_state.subs[result.name] = test_result
+                            
+                            if new_subs := unify(walked_args[0], candidate_func, new_state.subs):
+                                new_state.subs.update(new_subs)
+                                
+                                if all(c(new_state) for c in new_state.constraints):
+                                    yield new_state
+                                    break
+                    except (TypeError, ValueError):
+                        continue
+                        
+            # Case 3: Handle chained applications where result is a variable
+            elif isinstance(walked_result, (Var, TypedVar)):
+                try:
+                    # Try to apply the function even with variable arguments
+                    applied_result, result_type = apply_higher_order(func, walked_args, None)
+                    if applied_result is not None:
+                        # Create new state with result
+                        new_state = state.copy()
+                        
+                        # First store the result in the state with the variable name
+                        new_state.subs[result.name] = applied_result
+                        
+                        # Then try unification
+                        if new_subs := unify(result, applied_result, new_state.subs):
+                            new_state.subs.update(new_subs)
+                            
+                            # Add type information if available
+                            if result_type and isinstance(result, Var):
+                                type_var = Var(f"{result.name}_type")
+                                if type_subs := unify(type_var, result_type, new_state.subs):
+                                    new_state.subs.update(type_subs)
+                            
+                            if all(c(new_state) for c in new_state.constraints):
+                                yield new_state
+                except (TypeError, ValueError):
+                    pass
+            return
+            
+        # Rest of existing code for regular function application...
+        if all(not isinstance(arg, (Var, TypedVar)) for arg in walked_args):
+            try:
+                func_result = func(*walked_args)
+                if new_subs := unify(result, func_result, state.subs):
+                    new_state = state.copy()
+                    new_state.subs = new_subs
+                    if all(c(new_state) for c in new_state.constraints):
+                        yield new_state
+            except (TypeError, ValueError):
+                pass
+                
+        # Rest of existing apply function...
+        elif not isinstance(walked_result, (Var, TypedVar)):
+            var_index = None
+            concrete_args = []
+            
+            # Find which argument is the variable
+            for i, arg in enumerate(walked_args):
+                if isinstance(arg, (Var, TypedVar)):
+                    if var_index is not None:  # More than one variable
+                        return
+                    var_index = i
+                concrete_args.append(arg)
+            
+            if var_index is not None:
+                # Get type hints to ensure type safety
+                hints = get_type_hints(func)
+                param_names = list(signature(func).parameters.keys())
+                expected_type = hints.get(param_names[var_index])
+                
+                # Try possible values that match the type
+                if expected_type == int:
+                    # For integers, we can try to deduce the exact value
+                    # by solving the equation backwards
+                    try:
+                        # Create a list of args with None at the variable position
+                        test_args = list(walked_args)
+                        test_args[var_index] = None
+                        
+                        # Try to find the value that would give us the expected result
+                        for i in range(-1000, 1001):  # Reasonable range for integers
+                            test_args[var_index] = i
+                            if func(*test_args) == walked_result:
+                                if new_subs := unify(walked_args[var_index], i, state.subs):
+                                    new_state = state.copy()
+                                    new_state.subs = new_subs
+                                    if all(c(new_state) for c in new_state.constraints):
+                                        yield new_state
+                                break
+                    except (TypeError, ValueError):
+                        pass
+                        
+    return goal
+
 def infer_type(value: Any) -> Union[Type, str, FunctionType]:
-    """Infer the type of a value with support for generic types and functions."""
+    """Infer the type of a value with support for higher-order functions."""
+    # Handle higher-order function results
+    if isinstance(value, (map, filter)):
+        return "List"  # We'll refine this when we actually compute the result
+        
     # Handle functions
     if callable(value):
         # Try to get type hints if available
@@ -372,76 +563,4 @@ def function_type(func: Var, inputs: List[Type], output: Type) -> Goal:
                 if all(issubclass(a, e) for a, e in zip(actual_inputs, inputs)) and \
                    issubclass(actual_output, output):
                     yield state
-    return goal
-
-def apply(func: Callable, args: List[Any], result: Var) -> Goal:
-    """Create a goal that applies a function to arguments and unifies the result.
-    
-    Args:
-        func: The function to apply
-        args: List of arguments to pass to the function
-        result: Variable to unify with the function result
-        
-    Returns:
-        A goal that attempts to apply the function and unify the result
-    """
-    def goal(state: State) -> Generator[State, None, None]:
-        # Walk all arguments and result to their final values
-        walked_args = [walk(arg, state.subs) for arg in args]
-        walked_result = walk(result, state.subs)
-        
-        # Case 1: All arguments are concrete - try to compute result
-        if all(not isinstance(arg, (Var, TypedVar)) for arg in walked_args):
-            try:
-                func_result = func(*walked_args)
-                if new_subs := unify(result, func_result, state.subs):
-                    new_state = state.copy()
-                    new_state.subs = new_subs
-                    if all(c(new_state) for c in new_state.constraints):
-                        yield new_state
-            except (TypeError, ValueError):
-                pass
-                
-        # Case 2: Result is concrete and exactly one argument is a variable
-        # Try to deduce the variable's value
-        elif not isinstance(walked_result, (Var, TypedVar)):
-            var_index = None
-            concrete_args = []
-            
-            # Find which argument is the variable
-            for i, arg in enumerate(walked_args):
-                if isinstance(arg, (Var, TypedVar)):
-                    if var_index is not None:  # More than one variable
-                        return
-                    var_index = i
-                concrete_args.append(arg)
-            
-            if var_index is not None:
-                # Get type hints to ensure type safety
-                hints = get_type_hints(func)
-                param_names = list(signature(func).parameters.keys())
-                expected_type = hints.get(param_names[var_index])
-                
-                # Try possible values that match the type
-                if expected_type == int:
-                    # For integers, we can try to deduce the exact value
-                    # by solving the equation backwards
-                    try:
-                        # Create a list of args with None at the variable position
-                        test_args = list(walked_args)
-                        test_args[var_index] = None
-                        
-                        # Try to find the value that would give us the expected result
-                        for i in range(-1000, 1001):  # Reasonable range for integers
-                            test_args[var_index] = i
-                            if func(*test_args) == walked_result:
-                                if new_subs := unify(walked_args[var_index], i, state.subs):
-                                    new_state = state.copy()
-                                    new_state.subs = new_subs
-                                    if all(c(new_state) for c in new_state.constraints):
-                                        yield new_state
-                                break
-                    except (TypeError, ValueError):
-                        pass
-                        
     return goal

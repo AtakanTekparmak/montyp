@@ -331,5 +331,93 @@ class TestFunctionApplication(unittest.TestCase):
         self.assertEqual(solutions[0]['y'], 10)
         self.assertEqual(solutions[0]['result'], 52)
 
+class TestHigherOrderFunctions(unittest.TestCase):
+    """Test cases for higher-order function applications"""
+    
+    def test_map_with_simple_function(self):
+        """Test map function with a simple transformation"""
+        def double(x: int) -> int:
+            return x * 2
+            
+        input_list = TypedVar('input', List[int])
+        result = Var('result')
+        result_type = Var('result_type')
+        
+        solutions = run([
+            eq(input_list, [1, 2, 3]),
+            apply(map, [double, input_list], result),
+            type_of(result, result_type)
+        ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['result'], [2, 4, 6])
+        self.assertEqual(solutions[0]['result_type'], 'List[int]')
+    
+    def test_map_with_type_inference(self):
+        """Test map with type inference of input and output lists"""
+        def to_string(x: int) -> str:
+            return str(x)
+            
+        input_list = Var('input')  # Untyped variable
+        result = Var('result')
+        input_type = Var('input_type')
+        result_type = Var('result_type')
+        
+        solutions = run([
+            eq(input_list, [1, 2, 3]),
+            type_of(input_list, input_type),
+            apply(map, [to_string, input_list], result),
+            type_of(result, result_type)
+        ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['input_type'], 'List[int]')
+        self.assertEqual(solutions[0]['result_type'], 'List[str]')
+        self.assertEqual(solutions[0]['result'], ['1', '2', '3'])
+    
+    def test_map_with_deduced_function(self):
+        """Test map where we deduce the transformation function"""
+        def double(x: int) -> int:
+            return x * 2
+            
+        def triple(x: int) -> int:
+            return x * 3
+            
+        input_list = TypedVar('input', List[int])
+        transform = Var('transform')  # Function to be deduced
+        result = Var('result')
+        
+        solutions = run([
+            eq(input_list, [1, 2, 3]),
+            eq(result, [2, 4, 6]),  # We know the desired output
+            apply(map, [transform, input_list], result),
+            type_of(transform, FunctionType([int], int))  # Constrain function type
+        ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['transform'](2), 4)  # Verify behavior
+
+    def test_nested_higher_order_functions(self):
+        """Test composition of higher-order functions"""
+        def increment(x: int) -> int:
+            return x + 1
+            
+        def stringify(x: int) -> str:
+            return str(x)
+            
+        input_list = TypedVar('input', List[int])
+        temp_result = Var('temp_result')
+        final_result = Var('final_result')
+        
+        solutions = run([
+            eq(input_list, [1, 2, 3]),
+            apply(map, [increment, input_list], temp_result),
+            apply(map, [stringify, temp_result], final_result)
+        ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['temp_result'], [2, 3, 4])
+        self.assertEqual(solutions[0]['final_result'], ['2', '3', '4'])
+
 if __name__ == '__main__':
     unittest.main() 
