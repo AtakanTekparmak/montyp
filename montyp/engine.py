@@ -386,13 +386,13 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
         A goal that attempts to apply the function and unify the result
     """
     def goal(state: State) -> Generator[State, None, None]:
-        # Walk all arguments to their final values
+        # Walk all arguments and result to their final values
         walked_args = [walk(arg, state.subs) for arg in args]
+        walked_result = walk(result, state.subs)
         
-        # Only execute if all arguments are concrete values (not Var/TypedVar)
+        # Case 1: All arguments are concrete - try to compute result
         if all(not isinstance(arg, (Var, TypedVar)) for arg in walked_args):
             try:
-                # Execute function with concrete values
                 func_result = func(*walked_args)
                 if new_subs := unify(result, func_result, state.subs):
                     new_state = state.copy()
@@ -400,6 +400,48 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
                     if all(c(new_state) for c in new_state.constraints):
                         yield new_state
             except (TypeError, ValueError):
-                # Function application failed - no solutions
                 pass
+                
+        # Case 2: Result is concrete and exactly one argument is a variable
+        # Try to deduce the variable's value
+        elif not isinstance(walked_result, (Var, TypedVar)):
+            var_index = None
+            concrete_args = []
+            
+            # Find which argument is the variable
+            for i, arg in enumerate(walked_args):
+                if isinstance(arg, (Var, TypedVar)):
+                    if var_index is not None:  # More than one variable
+                        return
+                    var_index = i
+                concrete_args.append(arg)
+            
+            if var_index is not None:
+                # Get type hints to ensure type safety
+                hints = get_type_hints(func)
+                param_names = list(signature(func).parameters.keys())
+                expected_type = hints.get(param_names[var_index])
+                
+                # Try possible values that match the type
+                if expected_type == int:
+                    # For integers, we can try to deduce the exact value
+                    # by solving the equation backwards
+                    try:
+                        # Create a list of args with None at the variable position
+                        test_args = list(walked_args)
+                        test_args[var_index] = None
+                        
+                        # Try to find the value that would give us the expected result
+                        for i in range(-1000, 1001):  # Reasonable range for integers
+                            test_args[var_index] = i
+                            if func(*test_args) == walked_result:
+                                if new_subs := unify(walked_args[var_index], i, state.subs):
+                                    new_state = state.copy()
+                                    new_state.subs = new_subs
+                                    if all(c(new_state) for c in new_state.constraints):
+                                        yield new_state
+                                break
+                    except (TypeError, ValueError):
+                        pass
+                        
     return goal

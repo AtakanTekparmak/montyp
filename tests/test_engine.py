@@ -5,7 +5,7 @@ from pathlib import Path
 # Add the parent directory to Python path for relative imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from montyp.engine import run, eq, type_of, getitem
+from montyp.engine import run, eq, type_of, getitem, apply
 from montyp.schemas import Var, TypedVar, FunctionType
 from typing import List, Union, Dict
 
@@ -246,6 +246,90 @@ class TestMontyEngine(unittest.TestCase):
         
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['funcs_type'], 'List[(int) -> int]')
+
+class TestFunctionApplication(unittest.TestCase):
+    """Test cases for function application constraints"""
+    
+    def test_basic_function_application(self):
+        """Test basic function application with simple types"""
+        def add(x: int, y: int) -> int:
+            return x + y
+            
+        x = TypedVar('x', int)
+        y = TypedVar('y', int)
+        result = Var('result')
+        
+        solutions = run([
+            eq(x, 42),
+            eq(y, 10),
+            apply(add, [x, y], result)
+        ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['result'], 52)
+    
+    def test_function_application_with_type_mismatch(self):
+        """Test function application with incompatible types"""
+        def add(x: int, y: int) -> int:
+            return x + y
+            
+        x = TypedVar('x', int)
+        y = TypedVar('y', str)  # Wrong type
+        result = Var('result')
+        
+        solutions = run([
+            eq(x, 42),
+            eq(y, "hello"),
+            apply(add, [x, y], result)
+        ])
+        
+        # Should fail due to type mismatch
+        self.assertEqual(len(solutions), 0)
+    
+    def test_nested_function_application(self):
+        """Test nested function applications"""
+        def add(x: int, y: int) -> int:
+            return x + y
+            
+        def multiply(x: int, y: int) -> int:
+            return x * y
+            
+        x = TypedVar('x', int)
+        y = TypedVar('y', int)
+        z = TypedVar('z', int)
+        temp = Var('temp')
+        result = Var('result')
+        
+        solutions = run([
+            eq(x, 2),
+            eq(y, 3),
+            eq(z, 4),
+            apply(add, [x, y], temp),      # 2 + 3 = 5
+            apply(multiply, [temp, z], result)  # 5 * 4 = 20
+        ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['temp'], 5)
+        self.assertEqual(solutions[0]['result'], 20)
+    
+    def test_function_application_with_variables(self):
+        """Test function application where some arguments are variables"""
+        def add(x: int, y: int) -> int:
+            return x + y
+            
+        x = TypedVar('x', int)
+        y = Var('y')  # Untyped variable
+        result = Var('result')
+        
+        solutions = run([
+            eq(x, 42),
+            eq(result, 52),  # We know the result we want
+            apply(add, [x, y], result)  # Should deduce y = 10
+        ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['y'], 10)
+        self.assertEqual(solutions[0]['result'], 52)
 
 if __name__ == '__main__':
     unittest.main() 

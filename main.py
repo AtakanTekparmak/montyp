@@ -9,23 +9,24 @@ def main():
     
     # Define variables
     x = TypedVar('x', int)
-    y = TypedVar('y', int)
+    y = Var('y')  # Untyped variable - will be deduced
     z = Var('z')
-    k = Var('k')
+
     x_type = Var('x_type')
     add_type = Var('add_type')
+    y_type = Var('y_type')
 
     # Define constraints
     result = run([
         eq(x, 42),
-        eq(y, 10),
         eq(z, (x, y)),
         type_of(x, x_type),
-        type_of(add, add_type),
-        apply(add, [x, y], k)
+        type_of(add, add_type),    # We know we want k to be 52
+        apply(add, [x, y], 52),  # This will deduce y = 10 since 42 + 10 = 52
+        type_of(y, y_type)
     ])
     
-    print("Demo result:\n", json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2))
 
 if __name__ == "__main__":
     main() 
