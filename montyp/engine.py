@@ -212,6 +212,8 @@ def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[str, Any]]:
                 else:
                     type_str = type_val.type[0].__name__
                 sol[f"{var.name}_type"] = type_str
+            elif isinstance(type_val, FunctionType):
+                sol[f"{var.name}_type"] = type_val.__repr__()
         
         if sol:
             solutions.append(sol)
@@ -285,11 +287,9 @@ def apply_higher_order(func: Callable, args: List[Any], result: Any) -> Any:
 def apply(func: Callable, args: List[Any], result: Var) -> Goal:
     """Create a goal that applies a function to arguments and unifies the result."""
     def goal(state: State) -> Generator[State, None, None]:
-        # Walk all arguments and result to their final values
         walked_args = [walk(arg, state.subs) for arg in args]
         walked_result = walk(result, state.subs)
         
-        # Check if this is a higher-order function
         if get_higher_order_type(func):
             # Case 1: All arguments are concrete
             if all(not isinstance(arg, (Var, TypedVar)) for arg in walked_args):
@@ -321,12 +321,20 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
                 input_list = walked_args[1]
                 expected_output = walked_result
                 
-                # Try each available function that matches the type signature
-                candidates = [v for k, v in state.subs.items() if isinstance(k, Var) and callable(v)]
+                # First, collect all functions from the substitutions
+                candidates = []
+                for k, v in state.subs.items():
+                    if isinstance(k, Var):
+                        v = walk(v, state.subs)  # Walk the value to its final form
+                        if callable(v):
+                            candidates.append(v)
+                
+                # Also check functions that are bound to variables in the current state
+                for k, v in state.subs.items():
+                    if isinstance(k, str) and callable(v):
+                        candidates.append(v)
+                
                 for candidate_func in candidates:
-                    if not callable(candidate_func):
-                        continue
-                        
                     try:
                         # Test if this function produces the expected output
                         test_result = list(map(candidate_func, input_list))
@@ -448,7 +456,9 @@ def infer_type(value: Any) -> Union[Type, str, FunctionType]:
                 else:
                     inputs.append(Any)
             output = hints.get('return', Any)
-            return str(FunctionType(inputs, output))  # Convert to string immediately
+            # Convert FunctionType to string representation immediately
+            func_type = FunctionType(inputs, output)
+            return func_type
         return "Callable"
         
     # Handle TypedVar values by using their type constraint

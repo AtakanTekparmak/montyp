@@ -202,7 +202,7 @@ class TestMontyEngine(unittest.TestCase):
         
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['f'], add)
-        self.assertEqual(result[0]['f_type'], '(int, int) -> int')
+        self.assertEqual(str(result[0]['f_type']), '(int, int) -> int')
 
     def test_function_type_constraints(self):
         """Test function type constraints"""
@@ -386,13 +386,20 @@ class TestHigherOrderFunctions(unittest.TestCase):
         input_list = TypedVar('input', List[int])
         transform = Var('transform')  # Function to be deduced
         result = Var('result')
+        f1 = Var('f1')
+        f2 = Var('f2')
         
         solutions = run([
+            eq(f1, double),
+            eq(f2, triple),
             eq(input_list, [1, 2, 3]),
-            eq(result, [2, 4, 6]),  # We know the desired output
+            eq(result, [2, 4, 6]),
             apply(map, [transform, input_list], result),
-            type_of(transform, FunctionType([int], int))  # Constrain function type
+            type_of(transform, FunctionType([int], int))
         ])
+        
+        self.assertEqual(len(solutions), 1)
+        self.assertEqual(solutions[0]['transform'](2), 4)
         
         self.assertEqual(len(solutions), 1)
         self.assertEqual(solutions[0]['transform'](2), 4)  # Verify behavior
