@@ -1,6 +1,6 @@
-from montyp.engine import run, eq, type_of, getitem
+import json
+from montyp.engine import run, eq, type_of
 from montyp.schemas import Var, TypedVar
-from typing import List, Union, Dict
 
 def main():
     # Define functions
@@ -11,21 +11,19 @@ def main():
     x = TypedVar('x', int)
     y = Var('y')
     z = Var('z')
-    z_type = Var('z_type')
-    y_type = Var('y_type')
+    x_type = Var('x_type')
     add_type = Var('add_type')
 
     # Define constraints
     result = run([
         eq(x, 42),
         eq(y, "Hello"),
-        type_of(y, y_type),
-        eq(z, [x, 43]),
-        type_of(z, z_type),
+        eq(z, (x, y)),
+        type_of(x, x_type),
         type_of(add, add_type)
     ])
     
-    print("Demo result:", result)
+    print("Demo result:\n", json.dumps(result, indent=2))
 
 if __name__ == "__main__":
     main() 

@@ -325,7 +325,7 @@ def infer_type(value: Any) -> Union[Type, str, FunctionType]:
         types_str = ", ".join(sorted(element_types))
         if container_type is list:
             return f"List[Union[{types_str}]]"
-        return f"Tuple[Union[{types_str}], ...]"
+        return f"Tuple[{types_str}]"
         
     return type(value).__name__
 

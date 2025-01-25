@@ -152,7 +152,7 @@ class TestMontyEngine(unittest.TestCase):
         
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['container'], {(1, 'a'), (2, 'b'), (3, 'c')})
-        self.assertEqual(result[0]['container_type'], 'Set[Tuple[Union[int, str], ...]]')
+        self.assertEqual(result[0]['container_type'], 'Set[Tuple[int, str]]')
 
     def test_recursive_types(self):
         """Test recursive type constraints"""
