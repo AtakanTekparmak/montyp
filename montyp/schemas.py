@@ -54,9 +54,15 @@ class TypedVar(Var):
             if not container_value:  # Empty container
                 return True
                 
+            # Handle Union types in element type
+            if get_origin(elem_type) is Union:
+                elem_types = get_args(elem_type)
+                return all(any(isinstance(elem, t) for t in elem_types)
+                          for elem in container_value)
+                          
             # Handle nested generic types
             if get_origin(elem_type) is not None:
-                return all(check_container_type(elem, elem_type, get_args(elem_type)[0])
+                return all(check_container_type(elem, get_origin(elem_type), get_args(elem_type)[0])
                           for elem in container_value)
             
             # Handle regular types

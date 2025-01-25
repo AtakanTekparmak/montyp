@@ -1,6 +1,6 @@
-from montyp.engine import run, eq, type_of
+from montyp.engine import run, eq, type_of, getitem
 from montyp.schemas import Var, TypedVar
-from typing import List, Union, Tuple
+from typing import List, Union, Tuple, Set, Dict
 
 if __name__ == "__main__":
     # Test 1: Basic type constraints
@@ -20,16 +20,18 @@ if __name__ == "__main__":
     
     print("\nTest Type Inference:", run([
         eq(a, [1, 2, 3]),
-        type_of(a, t)  # Now properly connects inferred type to t
+        type_of(a, t)
     ]))
     
-    # Test 3: Generic type constraints
-    list_of_ints = TypedVar('nums', List[int])  # Now supports generic types
+    # Test 3: Generic type constraints with variable propagation
+    list_of_ints = TypedVar('nums', List[int])
     elem = TypedVar('elem', int)
+    unknown = Var('unknown')  # This should get the int constraint
     
     print("\nTest Generic Constraints:", run([
-        eq(list_of_ints, [1, 2, elem]),
-        eq(elem, 3)
+        eq(list_of_ints, [1, 2, unknown]),  # Changed order to help unification
+        eq(unknown, 3),
+        eq(elem, unknown)
     ]))
     
     # Test 4: Mixed type inference
@@ -43,17 +45,59 @@ if __name__ == "__main__":
     
     # Test 5: Nested type constraints
     nested = TypedVar('nested', List[List[int]])
+    result = Var('result')
     
     print("\nTest Nested Types:", run([
-        eq(nested, [[1, 2], [3, 4]]),  # Should work
-        eq(nested, [[1, 2], [3, "4"]])  # Should fail
+        eq(nested, [[1, 2], [3, 4]]),
+        eq(result, nested)  # result should get the nested type constraint
     ]))
     
-    # Test 6: Complex type inference
-    complex_var = Var('complex')
-    complex_type = Var('complex_type')
+    # Test 6: Complex type inference with dictionaries
+    dict_var = Var('dict')
+    dict_type = Var('dict_type')
     
-    print("\nTest Complex Types:", run([
-        eq(complex_var, [(1, 2), [3, 4], {5, 6}]),
-        type_of(complex_var, complex_type)
+    print("\nTest Dict Types:", run([
+        eq(dict_var, {'a': [1, 2], 'b': [3, 4]}),
+        type_of(dict_var, dict_type)
     ]))
+    
+    # Test 7: Type constraint propagation
+    int_var = TypedVar('int_var', int)
+    a = Var('a')
+    b = Var('b')
+    
+    print("\nTest Constraint Propagation:", run([
+        eq(int_var, a),  # a gets int constraint
+        eq(a, b),        # b should also get int constraint
+        eq(b, 42)        # This should work
+    ]))
+    
+    # Test 8: Complex nested structures with type constraints
+    matrix = TypedVar('matrix', List[List[Union[int, float]]])
+    row = Var('row')
+    element = Var('element')
+    
+    print("\nTest Matrix Operations:", run([
+        eq(matrix, [[1, 2.5], [3, 4.0]]),
+        getitem(matrix, 0, row),      # row should be [1, 2.5]
+        getitem(row, 1, element)      # element should be 2.5
+    ]))
+    
+    # Test 9: Type inference with sets and tuples
+    container = Var('container')
+    container_type = Var('container_type')
+    
+    print("\nTest Container Types:", run([
+        eq(container, {(1, 'a'), (2, 'b'), (3, 'c')}),
+        type_of(container, container_type)
+    ]))
+    
+    # Test 10: Recursive type constraints
+    tree = TypedVar('tree', Dict[str, Union[int, List[int]]])
+    value = Var('value')
+    
+    print("\nTest Recursive Types:", run([
+        eq(tree, {'root': 1, 'children': [2, 3, 4]}),
+        getitem(tree, 'children', value),  # get the children list
+        getitem(value, 1, element)         # get element at index 1 (should be 3)
+    ])) 

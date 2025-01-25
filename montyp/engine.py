@@ -68,10 +68,16 @@ def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
         
     # Handle TypedVar constraints with recursive type checking
     if isinstance(u, TypedVar):
+        if isinstance(v, Var):
+            # When unifying TypedVar with Var, propagate the type constraint
+            return {**subs, v: u}
         if not u.check_type(v):
             return None
         return {**subs, u: v}
     if isinstance(v, TypedVar):
+        if isinstance(u, Var):
+            # When unifying Var with TypedVar, propagate the type constraint
+            return {**subs, u: v}
         if not v.check_type(u):
             return None
         return {**subs, v: u}
@@ -159,31 +165,75 @@ def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[str, Any]]:
     
     return solutions
 
+def getitem(container: Any, key: Any, result: Var) -> Goal:
+    """Create a goal that unifies result with container[key].
+    
+    Args:
+        container: The container to index into
+        key: The key/index to use
+        result: Variable to unify with the result
+        
+    Returns:
+        A goal that attempts to get the item and unify it
+    """
+    def goal(state: State) -> Generator[State, None, None]:
+        container_val = walk(container, state.subs)
+        key_val = walk(key, state.subs)
+        
+        if isinstance(container_val, (list, tuple, dict)) and not isinstance(key_val, Var):
+            try:
+                item = container_val[key_val]
+                if new_subs := unify(result, item, state.subs):
+                    new_state = state.copy()
+                    new_state.subs = new_subs
+                    if all(c(new_state) for c in new_state.constraints):
+                        yield new_state
+            except (IndexError, KeyError):
+                pass
+    return goal
+
 def infer_type(value: Any) -> Union[Type, str]:
     """Infer the type of a value with support for generic types."""
+    if isinstance(value, dict):
+        if not value:
+            return "Dict"
+        # Infer key and value types
+        key_types = {infer_type(k) for k in value.keys()}
+        value_types = {infer_type(v) for v in value.values()}
+        
+        # Convert type objects to strings if needed
+        key_types = {t.__name__ if isinstance(t, type) else t for t in key_types}
+        value_types = {t.__name__ if isinstance(t, type) else t for t in value_types}
+        
+        key_type = next(iter(key_types)) if len(key_types) == 1 else f"Union[{', '.join(sorted(key_types))}]"
+        value_type = next(iter(value_types)) if len(value_types) == 1 else f"Union[{', '.join(sorted(value_types))}]"
+        
+        return f"Dict[{key_type}, {value_type}]"
+        
+    if isinstance(value, set):
+        if not value:
+            return "Set"
+        element_types = {infer_type(x) for x in value}
+        element_types = {t.__name__ if isinstance(t, type) else t for t in element_types}
+        
+        if len(element_types) == 1:
+            return f"Set[{next(iter(element_types))}]"
+        return f"Set[Union[{', '.join(sorted(element_types))}]]"
+        
     if isinstance(value, (list, tuple)):
         container_type = type(value)
         if not value:
             return container_type.__name__
             
-        # Infer element types
         element_types = {infer_type(x) for x in value}
+        element_types = {t.__name__ if isinstance(t, type) else t for t in element_types}
         
-        # Convert type objects to strings if needed
-        element_types = {
-            t.__name__ if isinstance(t, type) else t
-            for t in element_types
-        }
-        
-        # If all elements are of the same type, create a generic type
         if len(element_types) == 1:
             elem_type = next(iter(element_types))
             if container_type is list:
                 return f"List[{elem_type}]"
-            elif container_type is tuple:
-                return f"Tuple[{elem_type}, ...]"
+            return f"Tuple[{elem_type}, ...]"
         
-        # For mixed types, create a union type
         types_str = ", ".join(sorted(element_types))
         if container_type is list:
             return f"List[Union[{types_str}]]"
