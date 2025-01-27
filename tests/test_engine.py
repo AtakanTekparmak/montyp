@@ -2,7 +2,7 @@ import unittest
 import sys
 from pathlib import Path
 from functools import reduce
-from typing import List, Union, Dict, get_type_hints
+from typing import List, Union, Dict, get_type_hints, Any
 
 # Add the parent directory to Python path for relative imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -617,6 +617,229 @@ class TestHigherOrderFunctions(unittest.TestCase):
         self.assertEqual(result[0]['filtered'], [2, 4, 6])
         self.assertEqual(result[0]['tripled'], [6, 12, 18])
         self.assertEqual(result[0]['total'], 36)
+
+class TestAdvancedPipelines(unittest.TestCase):
+    def test_complex_data_transformation_pipeline(self):
+        """Test a complex pipeline that transforms data through multiple stages with type checking"""
+        # Input processing stage
+        input_data = TypedVar('input_data', List[Dict[str, Union[int, str]]])
+        stage1_result = Var('stage1_result')
+        stage2_result = Var('stage2_result')
+        final_result = Var('final_result')
+        
+        def extract_numbers(data: List[Dict[str, Union[int, str]]]) -> List[int]:
+            return [d['value'] for d in data if isinstance(d.get('value'), int)]
+            
+        def filter_even(numbers: List[int]) -> List[int]:
+            return [n for n in numbers if n % 2 == 0]
+            
+        def calculate_stats(numbers: List[int]) -> Dict[str, Union[int, float]]:
+            if not numbers:
+                return {'count': 0, 'sum': 0, 'avg': 0.0}
+            return {
+                'count': len(numbers),
+                'sum': sum(numbers),
+                'avg': sum(numbers) / len(numbers)
+            }
+        
+        result = run([
+            eq(input_data, [
+                {'id': 'a', 'value': 1},
+                {'id': 'b', 'value': 'skip'},
+                {'id': 'c', 'value': 4},
+                {'id': 'd', 'value': 6}
+            ]),
+            apply(extract_numbers, [input_data], stage1_result),
+            apply(filter_even, [stage1_result], stage2_result),
+            apply(calculate_stats, [stage2_result], final_result)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['stage1_result'], [1, 4, 6])
+        self.assertEqual(result[0]['stage2_result'], [4, 6])
+        self.assertEqual(result[0]['final_result'], {
+            'count': 2,
+            'sum': 10,
+            'avg': 5.0
+        })
+
+    def test_branching_pipeline_with_type_constraints(self):
+        """Test a pipeline that branches based on type constraints and merges results"""
+        input_var = Var('input')
+        branch1_result = TypedVar('branch1_result', List[int])
+        branch2_result = TypedVar('branch2_result', List[str])
+        merged_result = Var('merged_result')
+        
+        def process_numbers(data: List[Any]) -> List[int]:
+            return [x * 2 for x in data if isinstance(x, int)]
+            
+        def process_strings(data: List[Any]) -> List[str]:
+            return [s.upper() for s in data if isinstance(s, str)]
+            
+        def merge_results(nums: List[int], strs: List[str]) -> Dict[str, List[Any]]:
+            return {
+                'numbers': nums,
+                'strings': strs
+            }
+        
+        result = run([
+            eq(input_var, [1, "hello", 2, "world", 3]),
+            apply(process_numbers, [input_var], branch1_result),
+            apply(process_strings, [input_var], branch2_result),
+            apply(merge_results, [branch1_result, branch2_result], merged_result)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['branch1_result'], [2, 4, 6])
+        self.assertEqual(result[0]['branch2_result'], ["HELLO", "WORLD"])
+        self.assertEqual(result[0]['merged_result'], {
+            'numbers': [2, 4, 6],
+            'strings': ["HELLO", "WORLD"]
+        })
+
+    def test_recursive_pipeline_with_accumulation(self):
+        """Test a pipeline that processes nested structures recursively"""
+        input_tree = TypedVar('input_tree', Dict[str, Union[int, Dict]])
+        processed_tree = Var('processed_tree')
+        leaf_sum = Var('leaf_sum')
+        
+        def process_tree(tree: Dict) -> Dict:
+            result = {}
+            for k, v in tree.items():
+                if isinstance(v, dict):
+                    result[k] = process_tree(v)
+                elif isinstance(v, int):
+                    result[k] = v * 2
+            return result
+            
+        def sum_leaves(tree: Dict) -> int:
+            total = 0
+            for v in tree.values():
+                if isinstance(v, dict):
+                    total += sum_leaves(v)
+                elif isinstance(v, int):
+                    total += v
+            return total
+        
+        result = run([
+            eq(input_tree, {
+                'a': 1,
+                'b': {
+                    'c': 2,
+                    'd': {
+                        'e': 3
+                    }
+                }
+            }),
+            apply(process_tree, [input_tree], processed_tree),
+            apply(sum_leaves, [processed_tree], leaf_sum)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['processed_tree'], {
+            'a': 2,
+            'b': {
+                'c': 4,
+                'd': {
+                    'e': 6
+                }
+            }
+        })
+        self.assertEqual(result[0]['leaf_sum'], 12)
+
+class TestAdvancedBranching(unittest.TestCase):
+    def test_conditional_type_branching(self):
+        """Test branching logic based on runtime type checking"""
+        input_val = Var('input_val')
+        type_var = Var('type_var')
+        result = Var('result')
+        
+        def process_by_type(val: Any) -> Dict[str, Any]:
+            if isinstance(val, int):
+                return {'type': 'number', 'value': val * 2}
+            elif isinstance(val, str):
+                return {'type': 'string', 'value': val.upper()}
+            elif isinstance(val, list):
+                return {'type': 'list', 'value': len(val)}
+            return {'type': 'unknown', 'value': None}
+        
+        # Test with different input types
+        for test_input, expected_type, expected_value in [
+            (42, 'number', 84),
+            ("hello", 'string', "HELLO"),
+            ([1, 2, 3], 'list', 3)
+        ]:
+            with self.subTest(input=test_input):
+                r = run([
+                    eq(input_val, test_input),
+                    type_of(input_val, type_var),
+                    apply(process_by_type, [input_val], result)
+                ])
+                
+                self.assertEqual(len(r), 1)
+                self.assertEqual(r[0]['result']['type'], expected_type)
+                self.assertEqual(r[0]['result']['value'], expected_value)
+
+    def test_dynamic_pipeline_construction(self):
+        """Test dynamically constructing pipelines based on input types"""
+        input_data = Var('input_data')
+        pipeline_type = Var('pipeline_type')
+        intermediate = Var('intermediate')
+        result = Var('result')
+        
+        def determine_pipeline(data: Any) -> str:
+            if all(isinstance(x, int) for x in data):
+                return 'numeric'
+            elif all(isinstance(x, str) for x in data):
+                return 'text'
+            return 'mixed'
+            
+        def numeric_pipeline(data: List[int]) -> Dict[str, float]:
+            return {'mean': sum(data) / len(data), 'sum': sum(data)}
+            
+        def text_pipeline(data: List[str]) -> Dict[str, Union[List[str], int]]:
+            return {'upper': [s.upper() for s in data], 'lengths': [len(s) for s in data]}
+            
+        def mixed_pipeline(data: List[Any]) -> Dict[str, List[Any]]:
+            nums = [x for x in data if isinstance(x, int)]
+            texts = [x for x in data if isinstance(x, str)]
+            return {'numbers': nums, 'texts': texts}
+        
+        # Test numeric pipeline
+        r1 = run([
+            eq(input_data, [1, 2, 3, 4]),
+            apply(determine_pipeline, [input_data], pipeline_type),
+            eq(pipeline_type, 'numeric'),
+            apply(numeric_pipeline, [input_data], result)
+        ])
+        
+        self.assertEqual(r1[0]['result'], {'mean': 2.5, 'sum': 10})
+        
+        # Test text pipeline
+        r2 = run([
+            eq(input_data, ['a', 'b', 'c']),
+            apply(determine_pipeline, [input_data], pipeline_type),
+            eq(pipeline_type, 'text'),
+            apply(text_pipeline, [input_data], result)
+        ])
+        
+        self.assertEqual(r2[0]['result'], {
+            'upper': ['A', 'B', 'C'],
+            'lengths': [1, 1, 1]
+        })
+        
+        # Test mixed pipeline
+        r3 = run([
+            eq(input_data, [1, 'a', 2, 'b']),
+            apply(determine_pipeline, [input_data], pipeline_type),
+            eq(pipeline_type, 'mixed'),
+            apply(mixed_pipeline, [input_data], result)
+        ])
+        
+        self.assertEqual(r3[0]['result'], {
+            'numbers': [1, 2],
+            'texts': ['a', 'b']
+        })
 
 if __name__ == '__main__':
     unittest.main() 
