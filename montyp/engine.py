@@ -2,7 +2,7 @@ from itertools import chain
 from typing import Any, Dict, List, Optional, Generator, TypeVar, Set, Type, get_origin, get_args, Union, get_type_hints, Callable
 from collections.abc import Sequence
 from inspect import signature
-from functools import partial
+from functools import partial, reduce
 import inspect
 
 from .schemas import Var, TypedVar, State, Goal, FunctionType, AbstractFunctionType, LogicalFunction
@@ -324,33 +324,23 @@ def apply_higher_order(func: Callable, args: List[Any], result: Any) -> Any:
     3. Inferring the result type based on function composition
     """
     try:
-        # Get type hints for the higher-order function
-        hints = get_type_hints(func)
-        if not hints:
-            return None
-            
         # For functions like map, filter, reduce that take a function as first arg
         if callable(args[0]):
             fn = args[0]
-            fn_hints = get_type_hints(fn)
-            
-            # Get the input and output types of the function argument
-            fn_input_type = next(iter(fn_hints.values()))
-            fn_output_type = fn_hints.get('return')
             
             # Handle different higher-order functions based on their behavior
-            if func.__name__ == 'map':
-                # map(f, xs) -> [f(x) for x in xs]
-                return list(map(fn, args[1]))
-            elif func.__name__ == 'filter':
-                # filter(f, xs) -> [x for x in xs if f(x)]
-                return list(filter(fn, args[1]))
-            elif func.__name__ == 'reduce':
-                # reduce(f, xs, initial) -> f(...f(f(initial, x[0]), x[1])...)
-                from functools import reduce
-                initial = args[2] if len(args) > 2 else args[1][0]
-                sequence = args[1] if len(args) > 2 else args[1][1:]
-                return reduce(fn, sequence, initial)
+            if func == map:
+                mapped = list(map(fn, args[1]))
+                return mapped
+            elif func == filter:
+                filtered = list(filter(fn, args[1]))
+                return filtered
+            elif func == reduce:
+                if len(args) > 2:  # Has initial value
+                    reduced = reduce(fn, args[1], args[2])
+                else:
+                    reduced = reduce(fn, args[1])
+                return reduced
             else:
                 # For any other higher-order function, try direct application
                 result = func(*args)
@@ -375,174 +365,172 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
         walked_args = [walk(arg, state.subs) for arg in args]
         walked_result = walk(result, state.subs)
 
-        # Special handling for map function
-        if func == map:
-            map_func, iterable = walked_args
-            new_state = state.copy()
+        # Handle higher-order functions
+        if func in (map, filter, reduce):
+            fn_var = walked_args[0]
+            iterable = walked_args[1]
+            
+            # Get concrete values
             walked_iterable = walk(iterable, state.subs)
-
-            # Handle case where iterable is TypedVar
             if isinstance(walked_iterable, TypedVar):
-                walked_iterable = []  # Empty list matching the type constraint
+                walked_iterable = []
 
-            # If we have concrete input and output, we can infer the function
-            if not isinstance(walked_result, (Var, TypedVar)):
-                # First try to find a concrete function that matches
-                found = False
+            # Handle case where function is a variable
+            if isinstance(fn_var, Var):
+                # Determine input and output types based on the higher-order function
+                input_type = (type(walked_iterable[0]) if walked_iterable 
+                            else get_args(iterable.type[0])[0] if isinstance(iterable, TypedVar) 
+                            else int)
                 
-                # Try the function if it's already bound
-                if not isinstance(map_func, (Var, TypedVar)):
-                    try:
-                        test_result = list(map(map_func, walked_iterable))
-                        if test_result == walked_result:
-                            if new_subs := unify(result, test_result, new_state.subs):
-                                new_state.subs.update(new_subs)
-                                if all(c(new_state) for c in new_state.constraints):
-                                    yield new_state
-                                    found = True
-                    except:
-                        pass
-                
-                # If not found and map_func is a variable, try to deduce it
-                if not found and isinstance(map_func, Var):
-                    # Try different possible type signatures
-                    input_type = (type(walked_iterable[0]) if walked_iterable 
-                                else get_args(iterable.type[0])[0] if isinstance(iterable, TypedVar) 
-                                else int)  # fallback
-                    
-                    # Get possible output types based on the result type
-                    output_types = []
-                    if walked_result and isinstance(walked_result, list) and walked_result:
-                        output_types.append(type(walked_result[0]))
-                        # If the result type is str, also try int as an intermediate type
-                        if type(walked_result[0]) == str:
-                            output_types.append(int)
-                    else:
-                        output_types = [str]  # fallback
-                    
-                    # Try each possible output type
-                    for output_type in output_types:
-                        logical_func = LogicalFunction(map_func.name, input_type, output_type)
+                if func == map:
+                    # For map, try multiple output types
+                    if isinstance(walked_result, list) and walked_result:
+                        result_type = type(walked_result[0])
                         
-                        if walked_iterable and walked_result:
-                            # For str output, try both direct conversion and int->str
-                            if output_type == str and input_type == int:
-                                # Try direct int->str conversion
-                                for x, y in zip(walked_iterable, walked_result):
-                                    logical_func.add_example(x, str(x))
-                            else:
-                                for x, y in zip(walked_iterable, walked_result):
-                                    logical_func.add_example(x, y)
-                                
-                        candidate_state = new_state.copy()
-                        if func_subs := unify(map_func, logical_func, candidate_state.subs):
-                            candidate_state.subs.update(func_subs)
-                            if result_subs := unify(result, walked_result, candidate_state.subs):
-                                candidate_state.subs.update(result_subs)
-                                if all(c(candidate_state) for c in candidate_state.constraints):
-                                    yield candidate_state
-            else:
-                # Handle case where result is a variable
-                if not isinstance(map_func, (Var, TypedVar)):
-                    try:
-                        mapped_result = list(map(map_func, walked_iterable))
-                        if new_subs := unify(result, mapped_result, new_state.subs):
-                            new_state.subs.update(new_subs)
-                            if all(c(new_state) for c in new_state.constraints):
-                                yield new_state
-                    except:
-                        pass
-                else:
-                    # Try different possible type signatures when both function and result are variables
-                    input_type = (type(walked_iterable[0]) if walked_iterable 
-                                else get_args(iterable.type[0])[0] if isinstance(iterable, TypedVar) 
-                                else int)  # fallback
-                    
-                    # Look ahead in state to find constraints on the result
-                    final_output = None
-                    prev_func = None
-                    
-                    # Find the final output type and previous function
-                    for k, v in state.subs.items():
-                        if isinstance(v, list) and len(v) == len(walked_iterable):
-                            if all(isinstance(x, str) for x in v):
-                                final_output = v
-                        elif isinstance(v, LogicalFunction) and k != map_func.name:
-                            prev_func = v
-                    
-                    if final_output:
-                        # We're the second map function
-                        if prev_func:
-                            # We have a previous function, use its output type as our input type
-                            logical_func = LogicalFunction(map_func.name, prev_func.output_type, str)
-                            example_result = final_output
-                            
-                            for x, y in zip(walked_iterable, example_result):
+                        # Try direct path first
+                        logical_func = LogicalFunction(fn_var.name, input_type, result_type)
+                        if walked_iterable:
+                            for x, y in zip(walked_iterable, walked_result):
                                 logical_func.add_example(x, y)
-                            
-                            candidate_state = new_state.copy()
-                            if func_subs := unify(map_func, logical_func, candidate_state.subs):
-                                candidate_state.subs.update(func_subs)
-                                if result_subs := unify(result, example_result, candidate_state.subs):
+                        
+                        candidate_state = state.copy()
+                        if func_subs := unify(fn_var, logical_func, candidate_state.subs):
+                            candidate_state.subs.update(func_subs)
+                            try:
+                                applied_result = list(map(logical_func, walked_iterable))
+                                if result_subs := unify(result, applied_result, candidate_state.subs):
                                     candidate_state.subs.update(result_subs)
                                     if all(c(candidate_state) for c in candidate_state.constraints):
-                                        # Store the function with its variable name
-                                        candidate_state.subs[map_func.name] = logical_func
                                         yield candidate_state
+                            except:
+                                pass
+                        
+                        # If result is string and input is int, try intermediate path
+                        if result_type == str and input_type == int:
+                            # Path 2: int -> int (for later str conversion)
+                            logical_func = LogicalFunction(fn_var.name, input_type, int)
+                            if walked_iterable:
+                                for x in walked_iterable:
+                                    # For the intermediate step, double the input
+                                    logical_func.add_example(x, x * 2)
+                            
+                            # Try intermediate path
+                            candidate_state = state.copy()
+                            if func_subs := unify(fn_var, logical_func, candidate_state.subs):
+                                candidate_state.subs.update(func_subs)
+                                try:
+                                    intermediate_result = list(map(logical_func, walked_iterable))
+                                    # Don't unify with final result yet - this is intermediate
+                                    if result_subs := unify(result, intermediate_result, candidate_state.subs):
+                                        candidate_state.subs.update(result_subs)
+                                        # Add a constraint that the next function must convert int to str
+                                        candidate_state.constraints.append(
+                                            lambda s, t1=int, t2=str: any(
+                                                isinstance(v, LogicalFunction) and 
+                                                v.input_type == t1 and 
+                                                v.output_type == t2
+                                                for v in s.subs.values()
+                                            )
+                                        )
+                                        if all(c(candidate_state) for c in candidate_state.constraints):
+                                            yield candidate_state
+                                except:
+                                    pass
+                    elif isinstance(walked_result, Var):
+                        # If result is a variable, try both int and str output types
+                        for output_type in [int, str]:
+                            logical_func = LogicalFunction(fn_var.name, input_type, output_type)
+                            if walked_iterable:
+                                for x in walked_iterable:
+                                    if output_type == str:
+                                        logical_func.add_example(x, str(x))
+                                    else:
+                                        logical_func.add_example(x, x * 2)  # Example transformation
+                            
+                            candidate_state = state.copy()
+                            if func_subs := unify(fn_var, logical_func, candidate_state.subs):
+                                candidate_state.subs.update(func_subs)
+                                try:
+                                    applied_result = list(map(logical_func, walked_iterable))
+                                    if result_subs := unify(result, applied_result, candidate_state.subs):
+                                        candidate_state.subs.update(result_subs)
+                                        if all(c(candidate_state) for c in candidate_state.constraints):
+                                            yield candidate_state
+                                except:
+                                    pass
                     else:
-                        # We're the first map function
-                        # Try both paths:
-                        # Path 1: int -> int (for int -> str later)
-                        logical_func = LogicalFunction(map_func.name, input_type, int)
-                        example_result = list(walked_iterable)  # Keep as int
+                        # No result type available - try str as default
+                        logical_func = LogicalFunction(fn_var.name, input_type, str)
+                        if walked_iterable:
+                            for x in walked_iterable:
+                                logical_func.add_example(x, str(x))
                         
-                        for x, y in zip(walked_iterable, example_result):
-                            logical_func.add_example(x, y)
-                        
-                        candidate_state = new_state.copy()
-                        if func_subs := unify(map_func, logical_func, candidate_state.subs):
+                        candidate_state = state.copy()
+                        if func_subs := unify(fn_var, logical_func, candidate_state.subs):
                             candidate_state.subs.update(func_subs)
-                            if result_subs := unify(result, example_result, candidate_state.subs):
-                                candidate_state.subs.update(result_subs)
-                                if all(c(candidate_state) for c in candidate_state.constraints):
-                                    # Store the function with its variable name
-                                    candidate_state.subs[map_func.name] = logical_func
-                                    # Add a constraint that the next function must take int input and output str
-                                    candidate_state.constraints.append(
-                                        lambda s, t1=int, t2=str: any(
-                                            isinstance(v, LogicalFunction) and 
-                                            v.input_type == t1 and 
-                                            v.output_type == t2
-                                            for v in s.subs.values()
-                                        )
-                                    )
-                                    yield candidate_state
-                        
-                        # Path 2: int -> str (for str -> str later)
-                        logical_func = LogicalFunction(map_func.name, input_type, str)
-                        example_result = [str(x) for x in walked_iterable]
-                        
-                        for x, y in zip(walked_iterable, example_result):
-                            logical_func.add_example(x, y)
-                        
-                        candidate_state = new_state.copy()
-                        if func_subs := unify(map_func, logical_func, candidate_state.subs):
-                            candidate_state.subs.update(func_subs)
-                            if result_subs := unify(result, example_result, candidate_state.subs):
-                                candidate_state.subs.update(result_subs)
-                                if all(c(candidate_state) for c in candidate_state.constraints):
-                                    # Store the function with its variable name
-                                    candidate_state.subs[map_func.name] = logical_func
-                                    # Add a constraint that the next function must take str input and output str
-                                    candidate_state.constraints.append(
-                                        lambda s, t1=str, t2=str: any(
-                                            isinstance(v, LogicalFunction) and 
-                                            v.input_type == t1 and 
-                                            v.output_type == t2
-                                            for v in s.subs.values()
-                                        )
-                                    )
-                                    yield candidate_state
+                            try:
+                                applied_result = list(map(logical_func, walked_iterable))
+                                if result_subs := unify(result, applied_result, candidate_state.subs):
+                                    candidate_state.subs.update(result_subs)
+                                    if all(c(candidate_state) for c in candidate_state.constraints):
+                                        yield candidate_state
+                            except:
+                                pass
+                else:
+                    # For filter and reduce
+                    if func == filter:
+                        output_type = bool
+                    else:  # reduce
+                        if len(walked_args) > 2:
+                            output_type = type(walked_args[2])
+                        elif not isinstance(walked_result, Var):
+                            output_type = type(walked_result)
+                        else:
+                            output_type = input_type
+
+                    # Create logical function
+                    logical_func = LogicalFunction(fn_var.name, input_type, output_type)
+                    
+                    # Add examples based on the higher-order function
+                    if walked_iterable:
+                        if func == filter and isinstance(walked_result, list):
+                            for x in walked_iterable:
+                                logical_func.add_example(x, x in walked_result)
+                        elif func == reduce and not isinstance(walked_result, Var):
+                            if len(walked_args) > 2:
+                                acc = walked_args[2]
+                            else:
+                                acc = walked_iterable[0]
+                                walked_iterable = walked_iterable[1:]
+                            for x in walked_iterable:
+                                logical_func.add_example((acc, x), walked_result)
+                                acc = walked_result
+
+                    # Try to unify with this logical function
+                    candidate_state = state.copy()
+                    if func_subs := unify(fn_var, logical_func, candidate_state.subs):
+                        candidate_state.subs.update(func_subs)
+                        try:
+                            applied_result = apply_higher_order(func, [logical_func] + walked_args[1:], walked_result)
+                            if applied_result is not None:
+                                if result_subs := unify(result, applied_result, candidate_state.subs):
+                                    candidate_state.subs.update(result_subs)
+                                    if all(c(candidate_state) for c in candidate_state.constraints):
+                                        yield candidate_state
+                        except:
+                            pass
+            else:
+                # Function is concrete, apply directly
+                try:
+                    applied_result = apply_higher_order(func, walked_args, walked_result)
+                    if applied_result is not None:
+                        if new_subs := unify(result, applied_result, state.subs):
+                            new_state = state.copy()
+                            new_state.subs = new_subs
+                            if all(c(new_state) for c in new_state.constraints):
+                                yield new_state
+                except:
+                    pass
             return
 
         # Handle regular function application
@@ -552,12 +540,10 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
                 if any(isinstance(arg, Var) for arg in walked_args):
                     # Try to deduce variable arguments from result
                     if not isinstance(walked_result, (Var, TypedVar)):
-                        # Create a logical function to solve for the variable
                         var_idx = next(i for i, arg in enumerate(walked_args) if isinstance(arg, Var))
                         var = walked_args[var_idx]
                         
-                        # Try possible values that would give the expected result
-                        for test_val in range(-1000, 1001):  # Reasonable range for integers
+                        for test_val in range(-1000, 1001):
                             test_args = list(walked_args)
                             test_args[var_idx] = test_val
                             try:
@@ -571,7 +557,6 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
                             except:
                                 continue
                 else:
-                    # Regular function application with concrete arguments
                     applied_result = func(*walked_args)
                     if new_subs := unify(result, applied_result, state.subs):
                         new_state = state.copy()

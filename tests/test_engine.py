@@ -546,5 +546,77 @@ class TestHigherOrderFunctions(unittest.TestCase):
         self.assertEqual(result[0]['filtered'], [6, 8])
         self.assertEqual(result[0]['final_sum'], 14)
 
+    def test_composed_higher_order_functions_with_filter(self):
+        """Test composition of map and filter"""
+        def double(x: int) -> int:
+            return x * 2
+            
+        def is_even(x: int) -> bool:
+            return x % 2 == 0
+            
+        numbers = TypedVar('numbers', List[int])
+        doubled = Var('doubled')
+        filtered = Var('filtered')
+        
+        result = run([
+            eq(numbers, [1, 2, 3, 4]),
+            apply(map, [double, numbers], doubled),
+            apply(filter, [is_even, doubled], filtered)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['doubled'], [2, 4, 6, 8])
+        self.assertEqual(result[0]['filtered'], [2, 4, 6, 8])
+
+    def test_reduce_with_map(self):
+        """Test composition of map and reduce"""
+        def double(x: int) -> int:
+            return x * 2
+            
+        def sum_func(x: int, y: int) -> int:
+            return x + y
+            
+        numbers = TypedVar('numbers', List[int])
+        doubled = Var('doubled')
+        total = Var('total')
+        
+        result = run([
+            eq(numbers, [1, 2, 3, 4]),
+            apply(map, [double, numbers], doubled),
+            apply(reduce, [sum_func, doubled], total)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['doubled'], [2, 4, 6, 8])
+        self.assertEqual(result[0]['total'], 20)
+
+    def test_filter_map_reduce(self):
+        """Test composition of filter, map, and reduce"""
+        def is_even(x: int) -> bool:
+            return x % 2 == 0
+            
+        def triple(x: int) -> int:
+            return x * 3
+            
+        def sum_func(x: int, y: int) -> int:
+            return x + y
+            
+        numbers = TypedVar('numbers', List[int])
+        filtered = Var('filtered')
+        tripled = Var('tripled')
+        total = Var('total')
+        
+        result = run([
+            eq(numbers, [1, 2, 3, 4, 5, 6]),
+            apply(filter, [is_even, numbers], filtered),
+            apply(map, [triple, filtered], tripled),
+            apply(reduce, [sum_func, tripled], total)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['filtered'], [2, 4, 6])
+        self.assertEqual(result[0]['tripled'], [6, 12, 18])
+        self.assertEqual(result[0]['total'], 36)
+
 if __name__ == '__main__':
     unittest.main() 
