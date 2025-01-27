@@ -4,32 +4,21 @@ from montyp.schemas import Var, TypedVar
 from typing import List
 
 def main():
-    # Define functions
-    def double(x: int) -> int:
-        return x * 2
-        
-    def to_string(x: int) -> str:
-        return str(x)
-    
     # Define variables
     numbers = TypedVar('numbers', List[int])
-    doubled = Var('doubled')
-    strings = Var('strings')
-    numbers_type = Var('numbers_type')
-    doubled_type = Var('doubled_type')
-    strings_type = Var('strings_type')
-
+    map_func = Var('map_func')
+    map_func_2 = Var('map_func_2')
+    
     # Define constraints
-    result = run([
+    solutions = run([
         eq(numbers, [1, 2, 3, 4]),
-        type_of(numbers, numbers_type),
-        apply(map, [double, numbers], doubled),
-        type_of(doubled, doubled_type),
-        apply(map, [to_string, doubled], strings),
-        type_of(strings, strings_type)
+        apply(map, [map_func, numbers], [2, 4, 6, 8]),
+        apply(map, [map_func_2, numbers], ["2", "4", "6", "8"]),
     ])
     
-    print(json.dumps(result, indent=2))
+    # Remove raw values before JSON serialization
+    clean_solutions = [{k: v for k, v in sol.items() if k != '_raw'} for sol in solutions]
+    print(json.dumps(clean_solutions, indent=2))
 
 if __name__ == "__main__":
     main() 

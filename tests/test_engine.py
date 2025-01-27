@@ -7,7 +7,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from montyp.engine import run, eq, type_of, getitem, apply
 from montyp.schemas import Var, TypedVar, FunctionType
-from typing import List, Union, Dict
+from typing import List, Union, Dict, get_type_hints
 
 class TestMontyEngine(unittest.TestCase):
     def test_basic_type_constraints(self):
@@ -384,7 +384,7 @@ class TestHigherOrderFunctions(unittest.TestCase):
             return x * 3
             
         input_list = TypedVar('input', List[int])
-        transform = Var('transform')  # Function to be deduced
+        transform = Var('transform')
         result = Var('result')
         f1 = Var('f1')
         f2 = Var('f2')
@@ -399,10 +399,9 @@ class TestHigherOrderFunctions(unittest.TestCase):
         ])
         
         self.assertEqual(len(solutions), 1)
-        self.assertEqual(solutions[0]['transform'](2), 4)
-        
-        self.assertEqual(len(solutions), 1)
-        self.assertEqual(solutions[0]['transform'](2), 4)  # Verify behavior
+        # Use the raw value for function testing
+        raw_transform = solutions[0]['_raw']['transform']
+        self.assertEqual(raw_transform(2), 4)
 
     def test_nested_higher_order_functions(self):
         """Test composition of higher-order functions"""

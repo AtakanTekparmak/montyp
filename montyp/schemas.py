@@ -75,30 +75,36 @@ class TypedVar(Var):
             func_type = next(t for t in self.type if isinstance(t, FunctionType))
             
             # Check function signature
-            hints = get_type_hints(value)
-            if not hints:
-                return False  # Require type hints
-                
-            # Check parameters
-            sig = signature(value)
-            if len(sig.parameters) != len(func_type.inputs):
-                return False
-                
-            # Check input types
-            for param, expected_type in zip(sig.parameters.values(), func_type.inputs):
-                if param.name not in hints:
-                    return False
-                actual_type = hints[param.name]
-                if not issubclass(actual_type, expected_type):
+            try:
+                hints = get_type_hints(value)
+                if not hints:
+                    return False  # Require type hints
+                    
+                # Check parameters
+                sig = signature(value)
+                if len(sig.parameters) != len(func_type.inputs):
                     return False
                     
-            # Check return type
-            if 'return' not in hints:
+                # Check input types
+                for param, expected_type in zip(sig.parameters.values(), func_type.inputs):
+                    if param.name not in hints:
+                        return False
+                    actual_type = hints[param.name]
+                    # For function parameters, they must be exactly the same type
+                    if actual_type != expected_type:
+                        return False
+                        
+                # Check return type
+                if 'return' not in hints:
+                    return False
+                return_type = hints['return']
+                # Return type must match exactly
+                if return_type != func_type.output:
+                    return False
+                    
+                return True
+            except Exception as e:
                 return False
-            if not issubclass(hints['return'], func_type.output):
-                return False
-                
-            return True
             
         # If value is a TypedVar, check type compatibility
         if isinstance(value, TypedVar):
@@ -133,13 +139,43 @@ class TypedVar(Var):
         for t in self.type:
             origin = get_origin(t)
             if origin is not None:
+                # Handle Union types
+                if origin is Union:
+                    type_args = get_args(t)
+                    return any(isinstance(value, arg) for arg in type_args)
+                    
                 # It's a generic type (like List[int])
                 type_args = get_args(t)
                 if not type_args:
                     return isinstance(value, origin)
                     
                 if isinstance(value, (list, tuple)):
-                    return check_container_type(value, origin, type_args[0])
+                    # For lists, we need to handle variables in the list
+                    if not isinstance(value, origin):
+                        return False
+                        
+                    # If the list is empty, it's valid
+                    if not value:
+                        return True
+                        
+                    # Check each element's type
+                    elem_type = type_args[0]
+                    for elem in value:
+                        if isinstance(elem, Var):
+                            # Variables in lists are allowed and will be constrained later
+                            continue
+                            
+                        # For nested types (like List[List[int]]), recursively check
+                        if get_origin(elem_type) is not None:
+                            # Create a temporary TypedVar with the element type
+                            temp_var = TypedVar('_temp', elem_type)
+                            if not temp_var.check_type(elem):
+                                return False
+                        else:
+                            # For non-generic types, use regular isinstance
+                            if not isinstance(elem, elem_type):
+                                return False
+                    return True
                     
                 return isinstance(value, origin)
                 
@@ -157,6 +193,8 @@ class TypedVar(Var):
                 if args:
                     args_str = ', '.join(arg.__name__ for arg in args)
                     return f"{origin.__name__}[{args_str}]"
+            if isinstance(t, FunctionType):
+                return str(t)
             return t.__name__
             
         type_str = ' | '.join(type_name(t) for t in self.type)
@@ -192,3 +230,60 @@ class State:
 
 # Type definitions
 Goal = Callable[[State], Generator[State, None, None]]
+
+class AbstractFunctionType:
+    """Represents an abstract function type without a concrete implementation."""
+    
+    def __init__(self, inputs: List[Type], output: Type):
+        self.inputs = inputs
+        self.output = output
+    
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, AbstractFunctionType):
+            return False
+        return self.inputs == other.inputs and self.output == other.output
+    
+    def __repr__(self) -> str:
+        inputs_str = ", ".join(t.__name__ for t in self.inputs)
+        return f"({inputs_str}) -> {self.output.__name__}"
+
+class LogicalFunction:
+    """Represents a logical function variable with type constraints."""
+    
+    def __init__(self, name: str, input_type: Type, output_type: Type):
+        self.name = name
+        self.input_type = input_type
+        self.output_type = output_type
+        self._examples = []
+        
+    def __call__(self, x):
+        # This allows us to test potential implementations
+        if isinstance(x, self.input_type):
+            # Try to infer the function from examples
+            for input_val, output_val in self._examples:
+                if input_val == x:
+                    return output_val
+            raise ValueError(f"No implementation for {self.name}({x})")
+        raise TypeError(f"Expected {self.input_type.__name__}, got {type(x).__name__}")
+        
+    def add_example(self, input_val: Any, output_val: Any):
+        """Add an input-output example to help infer the function."""
+        self._examples.append((input_val, output_val))
+        
+    def to_dict(self) -> dict:
+        """Convert LogicalFunction to a dictionary for JSON serialization."""
+        return {
+            "type": "LogicalFunction",
+            "type_signature": f"({self.input_type.__name__}) -> {self.output_type.__name__}",
+        }
+        
+    def __eq__(self, other: Any) -> bool:
+        if callable(other):
+            try:
+                return all(other(x) == y for x, y in self._examples)
+            except:
+                return False
+        return False
+        
+    def __repr__(self):
+        return f"LogicalFunction({self.name}: ({self.input_type.__name__}) -> {self.output_type.__name__})"
