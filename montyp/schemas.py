@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Callable, Generator, TypeVar, Type, Optional, Union, get_origin, get_args, get_type_hints
 from inspect import signature
+from json import JSONEncoder
 
 T = TypeVar('T')  # Generic type for State constraints
 
@@ -219,6 +220,7 @@ class State:
         """
         self.subs = subs
         self.constraints = constraints
+        self._seen_signatures = set()  # Track seen type signatures
     
     def copy(self) -> 'State':
         """Create a deep copy of the state.
@@ -226,7 +228,23 @@ class State:
         Returns:
             A new State with copied substitutions and constraints.
         """
-        return State(self.subs.copy(), self.constraints.copy())
+        new_state = State(self.subs.copy(), self.constraints.copy())
+        new_state._seen_signatures = self._seen_signatures.copy()
+        return new_state
+        
+    def add_signature(self, signature: tuple) -> bool:
+        """Add a type signature to the state and return whether it's new.
+        
+        Args:
+            signature: A tuple representing a type signature
+            
+        Returns:
+            True if the signature was not seen before, False otherwise
+        """
+        if signature in self._seen_signatures:
+            return False
+        self._seen_signatures.add(signature)
+        return True
 
 # Type definitions
 Goal = Callable[[State], Generator[State, None, None]]
@@ -273,7 +291,6 @@ class LogicalFunction:
     def to_dict(self) -> dict:
         """Convert LogicalFunction to a dictionary for JSON serialization."""
         return {
-            "type": "LogicalFunction",
             "type_signature": f"({self.input_type.__name__}) -> {self.output_type.__name__}",
         }
         
@@ -287,3 +304,21 @@ class LogicalFunction:
         
     def __repr__(self):
         return f"LogicalFunction({self.name}: ({self.input_type.__name__}) -> {self.output_type.__name__})"
+        
+    def __get_type_hints__(self):
+        """Support for get_type_hints."""
+        return {'x': self.input_type, 'return': self.output_type}
+        
+    def __json__(self):
+        """Support for JSON serialization."""
+        return self.to_dict()
+
+class MontyEncoder(JSONEncoder):
+    """Custom JSON encoder for Monty types."""
+    
+    def default(self, obj):
+        if hasattr(obj, '__json__'):
+            return obj.__json__()
+        if isinstance(obj, type):
+            return obj.__name__
+        return super().default(obj)

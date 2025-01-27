@@ -171,82 +171,93 @@ def eq(a: Any, b: Any) -> Goal:
                 yield new_state
     return goal
 
-def run(goals: List[Goal], n: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Run a list of goals and return solutions.
+def run(goals: List[Goal]) -> List[Dict[str, Any]]:
+    """Run a list of goals and return all solutions.
     
     Args:
-        goals: List of goals to satisfy
-        n: Maximum number of solutions to return (None for all solutions)
+        goals: List of goals to solve
     
     Returns:
-        List of solutions, where each solution is a dictionary mapping
-        variable names to their values
+        List of solutions, where each solution is a dictionary mapping variable names to values
     """
-    Var._id = 0
-    
-    # Collect all variables from the goals
-    original_vars = set()
-    for goal in goals:
-        if hasattr(goal, '__closure__') and goal.__closure__:
-            for cell in goal.__closure__:
-                if isinstance(cell.cell_contents, tuple):
-                    for item in cell.cell_contents:
-                        original_vars.update(collect_vars(item))
-                else:
-                    original_vars.update(collect_vars(cell.cell_contents))
-    
-    states = [State({}, [])]
-    
-    # Process goals in sequence
-    for goal in goals:
-        states = list(chain.from_iterable(goal(s) for s in states))
-        if not states:
-            break
-    
-    solutions = []
-    for state in states[:n]:
-        sol = {}
-        raw_sol = {}  # Store raw values before JSON conversion
-        
-        # Resolve each original variable
-        for var in original_vars:
-            val = deep_walk(var, state.subs)
-            raw_sol[var.name] = val  # Store raw value
+    def pursue(goals: List[Goal], state: State) -> Generator[State, None, None]:
+        if not goals:
+            yield state
+            return
             
-            if isinstance(val, TypedVar):
+        goal, *rest = goals
+        for new_state in goal(state):
+            yield from pursue(rest, new_state)
+    
+    # Create initial state with empty substitutions and constraints
+    state = State({}, [])
+    
+    # Collect all solutions
+    solutions = []
+    seen_signatures = set()  # Track seen type signatures
+    
+    for final_state in pursue(goals, state):
+        # Extract variable bindings
+        solution = {}
+        raw_solution = {}  # Store raw values
+        
+        for var_name, val in final_state.subs.items():
+            if not isinstance(var_name, (str, Var)):
+                continue
+                
+            name = var_name.name if isinstance(var_name, Var) else var_name
+            walked_val = deep_walk(val, final_state.subs)
+            raw_solution[name] = walked_val
+            
+            if isinstance(walked_val, LogicalFunction):
+                # Store the function and its type information
+                solution[name] = walked_val
+                solution[f"{name}_type"] = f"({walked_val.input_type.__name__}) -> {walked_val.output_type.__name__}"
+            elif isinstance(walked_val, TypedVar):
                 # If it's a TypedVar with a concrete value, use that
-                concrete_val = walk(val, state.subs)
+                concrete_val = walk(walked_val, final_state.subs)
                 if not isinstance(concrete_val, (TypedVar, Var)):
-                    sol[var.name] = concrete_val
+                    solution[name] = concrete_val
                 # Always include type information for TypedVar
-                type_str = str(val.type[0])
-                if get_origin(val.type[0]) is not None:
-                    type_str = str(val.type[0].__origin__.__name__)
-                    args = get_args(val.type[0])
+                type_str = str(walked_val.type[0])
+                if get_origin(walked_val.type[0]) is not None:
+                    type_str = str(walked_val.type[0].__origin__.__name__)
+                    args = get_args(walked_val.type[0])
                     if args:
                         type_str += f"[{', '.join(arg.__name__ for arg in args)}]"
                 else:
-                    type_str = val.type[0].__name__
-                sol[f"{var.name}_type"] = type_str
-            elif isinstance(val, LogicalFunction):
-                # Only include type information for LogicalFunction
-                sol[f"{var.name}_type"] = f"({val.input_type.__name__}) -> {val.output_type.__name__}"
-            elif not isinstance(val, Var):
-                # Convert FunctionType to string representation
-                if isinstance(val, FunctionType):
-                    sol[var.name] = str(val)
-                else:
-                    sol[var.name] = val
-                
+                    type_str = walked_val.type[0].__name__
+                solution[f"{name}_type"] = type_str
+            else:
+                solution[name] = walked_val
                 # Include inferred type information
-                inferred = infer_type(val)
+                inferred = infer_type(walked_val)
                 if isinstance(inferred, (str, FunctionType)):
-                    sol[f"{var.name}_type"] = str(inferred)
+                    solution[f"{name}_type"] = str(inferred)
                 elif hasattr(inferred, '__name__'):
-                    sol[f"{var.name}_type"] = inferred.__name__
+                    solution[f"{name}_type"] = inferred.__name__
         
-        if sol:
-            solutions.append({**sol, "_raw": raw_sol})  # Include raw values for testing
+        # Create a signature tuple for this solution
+        if 'map_func' in raw_solution and 'map_func_2' in raw_solution:
+            f1 = raw_solution['map_func']
+            f2 = raw_solution['map_func_2']
+            
+            # Check if this is a valid solution
+            if f1.output_type == f2.input_type:
+                signature = (
+                    (f1.input_type.__name__, f1.output_type.__name__),
+                    (f2.input_type.__name__, f2.output_type.__name__)
+                )
+                
+                # Only add the solution if we haven't seen this signature before
+                if signature not in seen_signatures:
+                    seen_signatures.add(signature)
+                    solution["_raw"] = raw_solution
+                    solutions.append(solution)
+        else:
+            # For other solutions, just add them
+            solution["_raw"] = raw_solution
+            solutions.append(solution)
     
     return solutions
 
@@ -378,24 +389,42 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
                 
                 # If not found and map_func is a variable, try to deduce it
                 if not found and isinstance(map_func, Var):
-                    # Create a logical function from the examples
+                    # Try different possible type signatures
                     input_type = (type(walked_iterable[0]) if walked_iterable 
                                 else get_args(iterable.type[0])[0] if isinstance(iterable, TypedVar) 
                                 else int)  # fallback
-                    output_type = type(walked_result[0]) if walked_result else str  # fallback
-                    logical_func = LogicalFunction(map_func.name, input_type, output_type)
                     
-                    if walked_iterable and walked_result:
-                        for x, y in zip(walked_iterable, walked_result):
-                            logical_func.add_example(x, y)
-                            
-                    candidate_state = new_state.copy()
-                    if func_subs := unify(map_func, logical_func, candidate_state.subs):
-                        candidate_state.subs.update(func_subs)
-                        if result_subs := unify(result, walked_result, candidate_state.subs):
-                            candidate_state.subs.update(result_subs)
-                            if all(c(candidate_state) for c in candidate_state.constraints):
-                                yield candidate_state
+                    # Get possible output types based on the result type
+                    output_types = []
+                    if walked_result and isinstance(walked_result, list) and walked_result:
+                        output_types.append(type(walked_result[0]))
+                        # If the result type is str, also try int as an intermediate type
+                        if type(walked_result[0]) == str:
+                            output_types.append(int)
+                    else:
+                        output_types = [str]  # fallback
+                    
+                    # Try each possible output type
+                    for output_type in output_types:
+                        logical_func = LogicalFunction(map_func.name, input_type, output_type)
+                        
+                        if walked_iterable and walked_result:
+                            # For str output, try both direct conversion and int->str
+                            if output_type == str and input_type == int:
+                                # Try direct int->str conversion
+                                for x, y in zip(walked_iterable, walked_result):
+                                    logical_func.add_example(x, str(x))
+                            else:
+                                for x, y in zip(walked_iterable, walked_result):
+                                    logical_func.add_example(x, y)
+                                
+                        candidate_state = new_state.copy()
+                        if func_subs := unify(map_func, logical_func, candidate_state.subs):
+                            candidate_state.subs.update(func_subs)
+                            if result_subs := unify(result, walked_result, candidate_state.subs):
+                                candidate_state.subs.update(result_subs)
+                                if all(c(candidate_state) for c in candidate_state.constraints):
+                                    yield candidate_state
             else:
                 # Handle case where result is a variable
                 if not isinstance(map_func, (Var, TypedVar)):
@@ -407,6 +436,97 @@ def apply(func: Callable, args: List[Any], result: Var) -> Goal:
                                 yield new_state
                     except:
                         pass
+                else:
+                    # Try different possible type signatures when both function and result are variables
+                    input_type = (type(walked_iterable[0]) if walked_iterable 
+                                else get_args(iterable.type[0])[0] if isinstance(iterable, TypedVar) 
+                                else int)  # fallback
+                    
+                    # Look ahead in state to find constraints on the result
+                    final_output = None
+                    prev_func = None
+                    
+                    # Find the final output type and previous function
+                    for k, v in state.subs.items():
+                        if isinstance(v, list) and len(v) == len(walked_iterable):
+                            if all(isinstance(x, str) for x in v):
+                                final_output = v
+                        elif isinstance(v, LogicalFunction) and k != map_func.name:
+                            prev_func = v
+                    
+                    if final_output:
+                        # We're the second map function
+                        if prev_func:
+                            # We have a previous function, use its output type as our input type
+                            logical_func = LogicalFunction(map_func.name, prev_func.output_type, str)
+                            example_result = final_output
+                            
+                            for x, y in zip(walked_iterable, example_result):
+                                logical_func.add_example(x, y)
+                            
+                            candidate_state = new_state.copy()
+                            if func_subs := unify(map_func, logical_func, candidate_state.subs):
+                                candidate_state.subs.update(func_subs)
+                                if result_subs := unify(result, example_result, candidate_state.subs):
+                                    candidate_state.subs.update(result_subs)
+                                    if all(c(candidate_state) for c in candidate_state.constraints):
+                                        # Store the function with its variable name
+                                        candidate_state.subs[map_func.name] = logical_func
+                                        yield candidate_state
+                    else:
+                        # We're the first map function
+                        # Try both paths:
+                        # Path 1: int -> int (for int -> str later)
+                        logical_func = LogicalFunction(map_func.name, input_type, int)
+                        example_result = list(walked_iterable)  # Keep as int
+                        
+                        for x, y in zip(walked_iterable, example_result):
+                            logical_func.add_example(x, y)
+                        
+                        candidate_state = new_state.copy()
+                        if func_subs := unify(map_func, logical_func, candidate_state.subs):
+                            candidate_state.subs.update(func_subs)
+                            if result_subs := unify(result, example_result, candidate_state.subs):
+                                candidate_state.subs.update(result_subs)
+                                if all(c(candidate_state) for c in candidate_state.constraints):
+                                    # Store the function with its variable name
+                                    candidate_state.subs[map_func.name] = logical_func
+                                    # Add a constraint that the next function must take int input and output str
+                                    candidate_state.constraints.append(
+                                        lambda s, t1=int, t2=str: any(
+                                            isinstance(v, LogicalFunction) and 
+                                            v.input_type == t1 and 
+                                            v.output_type == t2
+                                            for v in s.subs.values()
+                                        )
+                                    )
+                                    yield candidate_state
+                        
+                        # Path 2: int -> str (for str -> str later)
+                        logical_func = LogicalFunction(map_func.name, input_type, str)
+                        example_result = [str(x) for x in walked_iterable]
+                        
+                        for x, y in zip(walked_iterable, example_result):
+                            logical_func.add_example(x, y)
+                        
+                        candidate_state = new_state.copy()
+                        if func_subs := unify(map_func, logical_func, candidate_state.subs):
+                            candidate_state.subs.update(func_subs)
+                            if result_subs := unify(result, example_result, candidate_state.subs):
+                                candidate_state.subs.update(result_subs)
+                                if all(c(candidate_state) for c in candidate_state.constraints):
+                                    # Store the function with its variable name
+                                    candidate_state.subs[map_func.name] = logical_func
+                                    # Add a constraint that the next function must take str input and output str
+                                    candidate_state.constraints.append(
+                                        lambda s, t1=str, t2=str: any(
+                                            isinstance(v, LogicalFunction) and 
+                                            v.input_type == t1 and 
+                                            v.output_type == t2
+                                            for v in s.subs.values()
+                                        )
+                                    )
+                                    yield candidate_state
             return
 
         # Handle regular function application

@@ -425,5 +425,40 @@ class TestHigherOrderFunctions(unittest.TestCase):
         self.assertEqual(solutions[0]['temp_result'], [2, 3, 4])
         self.assertEqual(solutions[0]['final_result'], ['2', '3', '4'])
 
+    def test_map_type_signatures(self):
+        """Test finding multiple possible type signatures for map functions"""
+        map_func = Var('map_func')
+        map_func_2 = Var('map_func_2')
+        input_list = [1, 2, 3]
+        intermediate = Var('intermediate')
+        final = ["1", "2", "3"]
+
+        # Find possible type signatures where:
+        # Case 1: map_func: (int) -> int, map_func_2: (int) -> str
+        # Case 2: map_func: (int) -> str, map_func_2: (str) -> str
+        result = run([
+            apply(map, [map_func, input_list], intermediate),
+            apply(map, [map_func_2, intermediate], final)
+        ])
+
+        self.assertEqual(len(result), 2)
+        
+        # Check both solutions are found
+        solutions = []
+        for r in result:
+            f1 = r['map_func']
+            f2 = r['map_func_2']
+            solutions.append((
+                (f1.input_type.__name__, f1.output_type.__name__),
+                (f2.input_type.__name__, f2.output_type.__name__)
+            ))
+
+        expected_solutions = [
+            (('int', 'int'), ('int', 'str')),
+            (('int', 'str'), ('str', 'str'))
+        ]
+
+        self.assertEqual(sorted(solutions), sorted(expected_solutions))
+
 if __name__ == '__main__':
     unittest.main() 
