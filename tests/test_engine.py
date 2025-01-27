@@ -1,13 +1,14 @@
 import unittest
 import sys
 from pathlib import Path
+from functools import reduce
+from typing import List, Union, Dict, get_type_hints
 
 # Add the parent directory to Python path for relative imports
 sys.path.append(str(Path(__file__).parent.parent))
 
 from montyp.engine import run, eq, type_of, getitem, apply
 from montyp.schemas import Var, TypedVar, FunctionType
-from typing import List, Union, Dict, get_type_hints
 
 class TestMontyEngine(unittest.TestCase):
     def test_basic_type_constraints(self):
@@ -459,6 +460,91 @@ class TestHigherOrderFunctions(unittest.TestCase):
         ]
 
         self.assertEqual(sorted(solutions), sorted(expected_solutions))
+
+    def test_filter_function(self):
+        """Test filter higher-order function with type inference"""
+        def is_even(x: int) -> bool:
+            return x % 2 == 0
+            
+        numbers = TypedVar('numbers', List[int])
+        filter_func = Var('filter_func')
+        filtered = Var('filtered')
+        
+        result = run([
+            eq(numbers, [1, 2, 3, 4, 5, 6]),
+            eq(filter_func, is_even),
+            apply(filter, [filter_func, numbers], filtered)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['filtered'], [2, 4, 6])
+        self.assertEqual(result[0]['filtered_type'], 'List[int]')
+        
+    def test_reduce_function(self):
+        """Test reduce higher-order function with type inference"""
+        def sum_func(x: int, y: int) -> int:
+            return x + y
+            
+        numbers = TypedVar('numbers', List[int])
+        reduce_func = Var('reduce_func')
+        reduced = Var('reduced')
+        
+        result = run([
+            eq(numbers, [1, 2, 3, 4]),
+            eq(reduce_func, sum_func),
+            apply(reduce, [reduce_func, numbers], reduced)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['reduced'], 10)
+        self.assertEqual(result[0]['reduced_type'], 'int')
+        
+    def test_reduce_with_initial(self):
+        """Test reduce with initial value"""
+        def concat(acc: str, x: int) -> str:
+            return f"{acc},{x}"
+            
+        numbers = TypedVar('numbers', List[int])
+        reduce_func = Var('reduce_func')
+        reduced = Var('reduced')
+        
+        result = run([
+            eq(numbers, [1, 2, 3]),
+            eq(reduce_func, concat),
+            apply(reduce, [reduce_func, numbers, "start"], reduced)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['reduced'], "start,1,2,3")
+        self.assertEqual(result[0]['reduced_type'], 'str')
+        
+    def test_composed_higher_order_functions(self):
+        """Test composition of multiple higher-order functions"""
+        def double(x: int) -> int:
+            return x * 2
+            
+        def is_greater_than_five(x: int) -> bool:
+            return x > 5
+            
+        def sum_func(x: int, y: int) -> int:
+            return x + y
+            
+        numbers = TypedVar('numbers', List[int])
+        doubled = Var('doubled')
+        filtered = Var('filtered')
+        final_sum = Var('final_sum')
+        
+        result = run([
+            eq(numbers, [1, 2, 3, 4]),
+            apply(map, [double, numbers], doubled),
+            apply(filter, [is_greater_than_five, doubled], filtered),
+            apply(reduce, [sum_func, filtered], final_sum)
+        ])
+        
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['doubled'], [2, 4, 6, 8])
+        self.assertEqual(result[0]['filtered'], [6, 8])
+        self.assertEqual(result[0]['final_sum'], 14)
 
 if __name__ == '__main__':
     unittest.main() 

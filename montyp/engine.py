@@ -75,6 +75,18 @@ def unify(u: Any, v: Any, subs: Dict[Var, Any]) -> Optional[Dict[Var, Any]]:
     if u == v:
         return subs
         
+    # Convert filter and map objects to lists for comparison
+    if hasattr(u, '__iter__') and not isinstance(u, (str, dict, list, tuple, set)):
+        u = list(u)
+    if hasattr(v, '__iter__') and not isinstance(v, (str, dict, list, tuple, set)):
+        v = list(v)
+        
+    # Convert lists to sets if one of the terms is a set
+    if isinstance(u, set) and isinstance(v, (list, tuple)):
+        v = set(v)
+    elif isinstance(v, set) and isinstance(u, (list, tuple)):
+        u = set(u)
+        
     # Handle Var unification
     if isinstance(u, Var) and not isinstance(u, TypedVar):
         return {**subs, u: v}
@@ -304,44 +316,48 @@ def get_higher_order_type(func: Callable) -> Optional[str]:
     return None
 
 def apply_higher_order(func: Callable, args: List[Any], result: Any) -> Any:
+    """Apply a higher-order function with type checking and inference.
+    
+    This function handles the application of higher-order functions by:
+    1. Analyzing the type signature of the higher-order function
+    2. Checking the types of the arguments
+    3. Inferring the result type based on function composition
     """
-    Apply higher-order function and handle type inference.
-    
-    Args:
-        func: The higher-order function to apply
-        args: The arguments to the function
-        result: The expected result of the function application
-    
-    Returns:
-        The result of the function application, or None if the function is not recognized
-    """
-    if func == map:
-        f, iterable = args
-        
-        # Handle case where function is a variable
-        if isinstance(f, (Var, TypedVar)):
-            return None, None  # Let the regular unification handle this case
+    try:
+        # Get type hints for the higher-order function
+        hints = get_type_hints(func)
+        if not hints:
+            return None
             
-        # Get type hints for the mapping function
-        try:
-            f_hints = get_type_hints(f)
-            input_type = f_hints.get('x') or next(iter(f_hints.values()))  # Get first param type
-            return_type = f_hints.get('return')
-        except (TypeError, ValueError):
-            return None, None
-        
-        # Apply map and convert to list
-        try:
-            mapped = list(map(f, iterable))
+        # For functions like map, filter, reduce that take a function as first arg
+        if callable(args[0]):
+            fn = args[0]
+            fn_hints = get_type_hints(fn)
             
-            # Infer result type based on function signature
-            if return_type:
-                return mapped, f'List[{return_type.__name__}]'
-            return mapped, f'List[{type(mapped[0]).__name__}]' if mapped else 'List'
-        except (TypeError, ValueError):
-            return None, None
-    
-    return None, None
+            # Get the input and output types of the function argument
+            fn_input_type = next(iter(fn_hints.values()))
+            fn_output_type = fn_hints.get('return')
+            
+            # Handle different higher-order functions based on their behavior
+            if func.__name__ == 'map':
+                # map(f, xs) -> [f(x) for x in xs]
+                return list(map(fn, args[1]))
+            elif func.__name__ == 'filter':
+                # filter(f, xs) -> [x for x in xs if f(x)]
+                return list(filter(fn, args[1]))
+            elif func.__name__ == 'reduce':
+                # reduce(f, xs, initial) -> f(...f(f(initial, x[0]), x[1])...)
+                from functools import reduce
+                initial = args[2] if len(args) > 2 else args[1][0]
+                sequence = args[1] if len(args) > 2 else args[1][1:]
+                return reduce(fn, sequence, initial)
+            else:
+                # For any other higher-order function, try direct application
+                result = func(*args)
+                return list(result) if hasattr(result, '__iter__') and not isinstance(result, (str, dict)) else result
+                
+    except Exception as e:
+        return None
 
 def apply(func: Callable, args: List[Any], result: Var) -> Goal:
     """
